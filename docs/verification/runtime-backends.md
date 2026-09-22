@@ -784,7 +784,7 @@ The steering channel's one behavioral assumption - a real worker agent follows t
 FM_SEND_INBOX_LIVE_E2E=1 tests/fm-send-inbox-doorbell-live-e2e.test.sh
 ```
 
-Observed output (combined across the full run and the grok rerun after the advisory-skip narrowing landed):
+Observed output (combined across the full run and the grok rerun after the advisory-skip narrowing landed; the grok note predates the later live-reviewer busy skip):
 
 ```text
 ok - claude (2.1.241 (Claude Code)): the doorbell reached a real worker, which acted and acked with the mv
@@ -798,7 +798,8 @@ ok - muse (Muse Code 0.2.1 (0.2.1-R1215.1)): the doorbell reached a real worker,
 ```
 
 All six installed harnesses honored the doorbell contract with real model turns: each listed the inbox named by the doorbell, read its record, executed the instruction inside it, and acknowledged with the atomic `mv`.
-Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which is why the ring's advisory pre-check skips only on an exact proven `pending` verdict - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
+Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which is why the ring's advisory pre-check still rings ambiguous composers rather than starving steering for any harness the classifier cannot positively identify.
+The current narrow skip set is exact proven `pending` text or the live-reviewer `busy` verdict from `bin/fm-composer-lib.sh`; a doorbell into an ambiguous composer remains a recoverable constant line.
 Kimi was not installed on the verification machine; its receive path is the same one-line-plus-shell contract, and the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` cover every harness-independent half.
 This guard is the refresh command after any harness upgrade; it spends a small number of real tokens per installed harness, reports an absent harness explicitly, and refuses a run that verified nothing.
 

@@ -110,7 +110,7 @@ backend (tmux or herdr; see "Auto-discovered supervisor pane" below):
 
 - **Primary-pane busy guard** - `pane_is_busy` trusts Herdr native `busy` when available, otherwise matches rendered output against only the detected primary harness's signature.
   This narrow delivery guard never classifies a recorded worker task and never uses a global union of vendor patterns.
-- **Composer-state guard** - `inject_msg` reads the full `empty`/`pending`/`pending-unproven`/`unknown` verdict from `fm_backend_composer_state` and injects only when it is affirmatively `empty`.
+- **Composer-state guard** - `inject_msg` reads the shared classifier verdict from `fm_backend_composer_state` and injects only when it is affirmatively `empty`.
   Every other or future verdict defers, including an unreadable pane, ambiguous geometry, a blank unidentified row, and a bare shell prompt left after the agent exits.
   Each adapter contributes only capture and capability facts to the fleet-wide screen classifier in `bin/fm-composer-lib.sh`, which owns every shape and verdict.
   It preserves proven idle composers as empty but requires a genuine container around shell glyphs; see `docs/herdr-backend.md` "Composer and injection safety" for the operator contract.
@@ -185,7 +185,7 @@ the operational prefix lets firstmate distinguish it from a real captain message
   separator before injection, so submission is unambiguous regardless of
   harness.
 - **Busy and composer guards on the supervisor pane** - before injecting, the daemon runs the detected-primary-harness rendered busy guard and reads `fm_backend_composer_state` directly.
-  Only `empty` permits injection; `pending` protects half-typed or swallowed input, and `unknown` protects unreadable panes and bare dead-shell prompts.
+  Only `empty` permits injection; non-empty and unreadable results protect half-typed input, swallowed input, unreadable panes, bare dead-shell prompts, and live reviewer work.
   Every other result preserves the buffer for retry, so the daemon never merges its digest into the captain's half-typed line or types it into a shell.
 - The active backend passes its capture plus declarative styled, cursor, identity, and row capabilities to the shared screen classifier; all structural recognition and verdict logic remains in `bin/fm-composer-lib.sh`.
   Styled captures let that owner remove dim/faint and dark-TRUECOLOR ghost or placeholder text while shape detection uses the ANSI-stripped screen, so a dark border is not lost with ghost content.
