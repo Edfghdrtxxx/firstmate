@@ -272,12 +272,12 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry
 # budget, verdict discarded.
-# Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text
-# (the watcher re-rings later), 2 the backend send failed, 3 skipped because
+# Returns 0 rang, 1 skipped because the composer PROVENLY holds pending text or
+# live reviewer work (the watcher re-rings later), 2 the backend send failed, 3 skipped because
 # the endpoint is positively dead or missing (nothing typed; recovery owns the
 # record). No return value is delivery proof; the acknowledgement move is the
 # only delivery signal.
-# The skip is deliberately narrow: only an exact `pending` verdict defers,
+# The skip is deliberately narrow: only exact `pending` or `busy` verdicts defer,
 # because there our Enter could submit someone's real half-typed content.
 # `pending-unproven` and `unknown` still ring - the worst outcome is a garbled
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
@@ -293,7 +293,7 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label]
   fi
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
-    pending) return 1 ;;
+    pending|busy) return 1 ;;
   esac
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare

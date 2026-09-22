@@ -284,6 +284,26 @@ test_ring_skips_dead_agent() {
   pass "inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints"
 }
 
+test_ring_skips_live_reviewer_tree() {
+  local dir state rec log rc
+  dir="$TMP_ROOT/ring-reviewer"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_watch_stubs "$dir" >/dev/null
+  printf 'transcript line\n\nSubagents\n├─ reviewer ★ running\n❯\nesc Inspect subagents\n' \
+    > "$dir/live.capture"
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  log="$dir/send.log"; : > "$log"
+  rc=0
+  PATH="$dir/fakebin:$PATH" FM_SEND_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$dir/live.capture" \
+    inbox_lib "$state" fm_task_inbox_ring tmux sess:fm-t1 "$rec" fm-t1 || rc=$?
+  [ "$rc" = 1 ] || fail "a live reviewer tree should skip the ring, got $rc"
+  [ ! -s "$log" ] || fail "a live reviewer tree was typed into:"$'\n'"$(cat "$log")"
+  [ -f "$rec" ] || fail "skipping a live reviewer tree must leave the durable record in place"
+  pass "inbox: a live reviewer tree blocks the doorbell before send"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -701,6 +721,7 @@ test_write_is_durable_and_exact
 test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
+test_ring_skips_live_reviewer_tree
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence

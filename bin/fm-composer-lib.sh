@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/fm-composer-lib.sh - the ONE fleet-wide owner of composer classification:
 # every shape a verified harness draws, every glyph, every container proof, and
-# the empty|pending|pending-unproven|unknown verdict, shared by every
+# the empty|pending|pending-unproven|busy|unknown verdict, shared by every
 # session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
 # bin/backends/{herdr,orca,cmux,zellij}.sh) and by fm-spawn.sh's kimi
 # launch-readiness check.
@@ -1182,11 +1182,38 @@ _fm_composer_row_is_omp_status() {  # <trimmed-row>
   fm_composer_idle_matches "$1" "${FM_COMPOSER_OMP_STATUS_RE:-$FM_COMPOSER_OMP_STATUS_RE_DEFAULT}" sensitive
 }
 
-# _fm_composer_row_is_subagents_hint: omp's live Subagents panel leaves an
-# `esc Inspect ...` navigation hint in the input-area rows. It is UI furniture,
-# not user text, and must not make an otherwise-empty prompt pending.
-_fm_composer_row_is_subagents_hint() {  # <trimmed-row>
-  case "$1" in
+# _fm_composer_has_subagents_panel: 0 when a Subagents heading is followed by
+# a tree row.
+_fm_composer_has_subagents_panel() {  # <plain-screen>
+  local line trimmed in_tree=0 subagents_glyph=''
+  while IFS= read -r line; do
+    trimmed=$line
+    fm_composer_normalize_trim_var trimmed
+    if [ "$in_tree" = 1 ]; then
+      case "$trimmed" in
+        '├─'*|'└─'*) return 0 ;;
+        '') in_tree=0 ;;
+      esac
+      if [ "$in_tree" = 1 ] \
+        && fm_composer_leading_agent_glyph_var subagents_glyph "$trimmed"; then
+        in_tree=0
+      fi
+    fi
+    case "$trimmed" in
+      Subagents|Subagents:|Subagents[[:space:]]*) in_tree=1 ;;
+    esac
+  done <<EOF
+$1
+EOF
+  return 1
+}
+
+# _fm_composer_row_is_subagents_hint: 0 when the row is omp's navigation hint
+# inside a proven Subagents panel.
+_fm_composer_row_is_subagents_hint() {  # <plain-screen> <trimmed-row>
+  local plain=$1 row=$2
+  _fm_composer_has_subagents_panel "$plain" || return 1
+  case "$row" in
     esc[[:space:]]Inspect[[:space:]]*) return 0 ;;
   esac
   return 1
@@ -1202,7 +1229,9 @@ _fm_composer_has_live_subagents() {  # <plain-screen>
     fm_composer_normalize_trim_var trimmed
     if [ "$in_tree" = 1 ]; then
       case "$trimmed" in
-        *'★'*) return 0 ;;
+        '├─'*|'└─'*)
+          case "$trimmed" in *'★'*) return 0 ;; esac
+          ;;
         '') in_tree=0 ;;
       esac
       if [ "$in_tree" = 1 ] \
@@ -1263,7 +1292,7 @@ _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
     if fm_composer_row_has_edge "$trimmed"; then return 1; fi
     if _fm_composer_row_is_omp_status "$trimmed"; then return 1; fi
     if _fm_composer_row_is_braille_furniture "$trimmed"; then return 1; fi
-    if _fm_composer_row_is_subagents_hint "$trimmed"; then
+    if _fm_composer_row_is_subagents_hint "$plain" "$trimmed"; then
       row=$((row + 1))
       continue
     fi
@@ -1279,14 +1308,16 @@ _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
 # suggestion happened to wrap; any surviving text is pending when styling can
 # prove it real and unknown otherwise (the same styled=0 degradation as the
 # glyph row itself).
-_fm_composer_classify_bare_wrap() {  # <screen> <styled> <glyph-row> <cursor-row>
-  local screen=$1 styled=$2 g=$3 cy=$4 row raw content glyph='' text_seen=0
+_fm_composer_classify_bare_wrap() {  # <screen> <plain> <styled> <glyph-row> <cursor-row>
+  local screen=$1 plain=$2 styled=$3 g=$4 cy=$5
+  local row raw trimmed content glyph='' text_seen=0
   row=$g
   while [ "$row" -le "$cy" ]; do
     raw=$(_fm_composer_screen_row "$row" "$screen")
     trimmed=$raw
     fm_composer_normalize_trim_var trimmed
-    if [ "$row" -ne "$g" ] && _fm_composer_row_is_subagents_hint "$trimmed"; then
+    if [ "$row" -ne "$g" ] \
+       && _fm_composer_row_is_subagents_hint "$plain" "$trimmed"; then
       row=$((row + 1))
       continue
     fi
@@ -1374,12 +1405,12 @@ _fm_composer_leftbar_floor_row() {  # <trimmed-row>
 # a row leading with the SAME glyph the envelope was proven by (`❯ my typed
 # draft`, which is a live composer) - is NOT furniture, so the envelope above
 # it stays stale and the verdict stays a refusal.
-_fm_composer_row_is_composer_furniture() {  # <trimmed-row> <proof-glyph>
-  local row=$1 proof=$2 glyph=''
+_fm_composer_row_is_composer_furniture() {  # <trimmed-row> <proof-glyph> <plain-screen>
+  local row=$1 proof=$2 plain=$3 glyph=''
   [ -n "$row" ] || return 1
   _fm_composer_row_is_omp_status "$row" && return 0
   _fm_composer_row_is_braille_furniture "$row" && return 0
-  _fm_composer_row_is_subagents_hint "$row" && return 0
+  _fm_composer_row_is_subagents_hint "$plain" "$row" && return 0
   fm_composer_idle_matches "$row" \
     "${FM_COMPOSER_MODE_HINT_RE:-$FM_COMPOSER_MODE_HINT_RE_DEFAULT}" sensitive && return 0
   fm_composer_leading_agent_glyph_var glyph "$row" || return 1
@@ -1442,7 +1473,7 @@ _fm_composer_locate_footer_zone() {  # <plain>
     trimmed=$(_fm_composer_screen_row "$next" "$plain")
     fm_composer_normalize_trim_var trimmed
     [ -n "$trimmed" ] || break
-    _fm_composer_row_is_composer_furniture "$trimmed" "$proof" || return 1
+    _fm_composer_row_is_composer_furniture "$trimmed" "$proof" "$plain" || return 1
     FM_COMPOSER_FOOTER_LAST=$next
     next=$((next + 1))
   done
@@ -1522,7 +1553,7 @@ _fm_composer_select_cursorless() {
       fm_composer_row_has_edge "$trimmed" && break
       _fm_composer_row_is_omp_status "$trimmed" && break
       _fm_composer_row_is_braille_furniture "$trimmed" && break
-      _fm_composer_row_is_subagents_hint "$trimmed" && break
+      _fm_composer_row_is_subagents_hint "$plain" "$trimmed" && break
       FM_COMPOSER_SELECTED_LAST=$next
       next=$((next + 1))
     done
@@ -1653,7 +1684,7 @@ EOF
   fi
   plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
   if _fm_composer_has_live_subagents "$plain"; then
-    printf 'unknown'
+    printf 'busy'
     return 0
   fi
   _fm_composer_scan_screen "$plain" "$cy"
@@ -1693,7 +1724,8 @@ EOF
     # and earns its retry.
     if [ "$FM_COMPOSER_SCAN_BARE_ROW" -ge 0 ] && [ "$cy" -gt "$FM_COMPOSER_SCAN_BARE_ROW" ] \
        && _fm_composer_wrap_region_ok "$plain" "$FM_COMPOSER_SCAN_BARE_ROW" "$cy"; then
-      _fm_composer_classify_bare_wrap "$screen" "$styled" "$FM_COMPOSER_SCAN_BARE_ROW" "$cy"
+      _fm_composer_classify_bare_wrap "$screen" "$plain" "$styled" \
+        "$FM_COMPOSER_SCAN_BARE_ROW" "$cy"
       return 0
     fi
     if [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] \
@@ -1728,7 +1760,7 @@ EOF
       ;;
     bare)
       if [ "$FM_COMPOSER_SELECTED_LAST" -gt "$FM_COMPOSER_SELECTED_FIRST" ]; then
-        _fm_composer_classify_bare_wrap "$screen" "$styled" \
+        _fm_composer_classify_bare_wrap "$screen" "$plain" "$styled" \
           "$FM_COMPOSER_SELECTED_FIRST" "$FM_COMPOSER_SELECTED_LAST"
       elif [ "$FM_COMPOSER_SCAN_PI_PAIR_FOUND" = 1 ] \
          && [ "$FM_COMPOSER_SELECTED_FIRST" -gt "$FM_COMPOSER_SCAN_PI_OPEN" ] \

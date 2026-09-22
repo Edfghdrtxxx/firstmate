@@ -486,20 +486,30 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
 test_matrix_omp_subagents_hint_and_live_reviewers() {
-  local subagents_hint starred
+  local subagents_hint real_prompt starred
   subagents_hint=$'transcript line
+
+Subagents
+├─ reviewer finished
 
 ❯
 esc Inspect subagents'
   assert_screen "omp Subagents inspection hint is composer furniture" empty "$CAPS_STYLED" "$subagents_hint"
-  assert_screen "omp Subagents inspection hint with cursor is idle furniture" empty "$CAPS_TMUX" "$subagents_hint" 3
+  assert_screen "omp Subagents inspection hint with cursor is idle furniture" empty "$CAPS_TMUX" "$subagents_hint" 6
+  real_prompt=$'transcript line
+
+❯
+esc Inspect the deployment'
+  assert_screen "ordinary esc Inspect prompt text stays pending" pending "$CAPS_STYLED" "$real_prompt"
+  assert_screen "ordinary esc Inspect prompt text stays unknown without styling" unknown "$CAPS_PLAIN" "$real_prompt"
   starred=$'transcript line
 
 Subagents
 ├─ reviewer ★ running
 ❯
 esc Inspect subagents'
-  assert_screen "live starred omp reviewer tree is not pending input" unknown "$CAPS_STYLED" "$starred"
+  assert_screen "live starred omp reviewer tree is busy" busy "$CAPS_STYLED" "$starred"
+  assert_screen "live starred omp reviewer tree is busy with cursor" busy "$CAPS_TMUX" "$starred" 4
   pass "matrix: omp Subagents hint is idle furniture and a starred reviewer tree is busy"
 }
 
