@@ -485,6 +485,23 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   assert_screen "wrapped typed text opening 'pi ·' stays pending" pending "$CAPS_TMUX" "$wrapped" 3
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
+test_matrix_omp_subagents_hint_and_live_reviewers() {
+  local subagents_hint starred
+  subagents_hint=$'transcript line
+
+❯
+esc Inspect subagents'
+  assert_screen "omp Subagents inspection hint is composer furniture" empty "$CAPS_STYLED" "$subagents_hint"
+  assert_screen "omp Subagents inspection hint with cursor is idle furniture" empty "$CAPS_TMUX" "$subagents_hint" 3
+  starred=$'transcript line
+
+Subagents
+├─ reviewer ★ running
+❯
+esc Inspect subagents'
+  assert_screen "live starred omp reviewer tree is not pending input" unknown "$CAPS_STYLED" "$starred"
+  pass "matrix: omp Subagents hint is idle furniture and a starred reviewer tree is busy"
+}
 
 # codex_cell <grey> <glyph>: one codex 0.154 starfield cell exactly as the
 # harness draws it - a truecolor grey foreground, the composer's grey
@@ -926,6 +943,7 @@ test_matrix_muse_truecolor_glyph_survives_signal_loss
 test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
+test_matrix_omp_subagents_hint_and_live_reviewers
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
 test_matrix_opencode_leftbar_signals

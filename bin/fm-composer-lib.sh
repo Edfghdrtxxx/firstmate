@@ -1182,6 +1182,43 @@ _fm_composer_row_is_omp_status() {  # <trimmed-row>
   fm_composer_idle_matches "$1" "${FM_COMPOSER_OMP_STATUS_RE:-$FM_COMPOSER_OMP_STATUS_RE_DEFAULT}" sensitive
 }
 
+# _fm_composer_row_is_subagents_hint: omp's live Subagents panel leaves an
+# `esc Inspect ...` navigation hint in the input-area rows. It is UI furniture,
+# not user text, and must not make an otherwise-empty prompt pending.
+_fm_composer_row_is_subagents_hint() {  # <trimmed-row>
+  case "$1" in
+    esc[[:space:]]Inspect[[:space:]]*) return 0 ;;
+  esac
+  return 1
+}
+
+# _fm_composer_has_live_subagents: 0 when the screen contains a starred row
+# beneath omp's Subagents heading. A star means a reviewer is still running, so
+# the parent pane is working and must not be treated as an input target.
+_fm_composer_has_live_subagents() {  # <plain-screen>
+  local line trimmed glyph='' in_tree=0
+  while IFS= read -r line; do
+    trimmed=$line
+    fm_composer_normalize_trim_var trimmed
+    if [ "$in_tree" = 1 ]; then
+      case "$trimmed" in
+        *'★'*) return 0 ;;
+        '') in_tree=0 ;;
+      esac
+      if [ "$in_tree" = 1 ] \
+        && fm_composer_leading_agent_glyph_var glyph "$trimmed"; then
+        in_tree=0
+      fi
+    fi
+    case "$trimmed" in
+      Subagents|Subagents:|Subagents[[:space:]]*) in_tree=1 ;;
+    esac
+  done <<EOF
+$1
+EOF
+  return 1
+}
+
 # _fm_composer_row_is_braille_furniture: 0 when the row is non-blank and its
 # non-whitespace content is entirely braille cells (fm_composer_strip_braille
 # above) - an animation row that never counts as typed content and bounds a
@@ -1226,6 +1263,10 @@ _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
     if fm_composer_row_has_edge "$trimmed"; then return 1; fi
     if _fm_composer_row_is_omp_status "$trimmed"; then return 1; fi
     if _fm_composer_row_is_braille_furniture "$trimmed"; then return 1; fi
+    if _fm_composer_row_is_subagents_hint "$trimmed"; then
+      row=$((row + 1))
+      continue
+    fi
     if fm_composer_leading_shell_glyph_var glyph "$trimmed"; then return 1; fi
     row=$((row + 1))
   done
@@ -1243,6 +1284,12 @@ _fm_composer_classify_bare_wrap() {  # <screen> <styled> <glyph-row> <cursor-row
   row=$g
   while [ "$row" -le "$cy" ]; do
     raw=$(_fm_composer_screen_row "$row" "$screen")
+    trimmed=$raw
+    fm_composer_normalize_trim_var trimmed
+    if [ "$row" -ne "$g" ] && _fm_composer_row_is_subagents_hint "$trimmed"; then
+      row=$((row + 1))
+      continue
+    fi
     content=$(_fm_composer_row_content "$raw" "$styled")
     if [ "$row" -eq "$g" ]; then
       _fm_composer_bare_row_strip_furniture_var content
@@ -1313,10 +1360,11 @@ _fm_composer_leftbar_floor_row() {  # <trimmed-row>
 
 # _fm_composer_row_is_composer_furniture: 0 when <trimmed-row> is DEMONSTRABLY
 # a harness's own furniture drawn below its composer, given <proof-glyph> - the
-# agent glyph that proved the envelope above it. Exactly four things qualify,
+# agent glyph that proved the envelope above it. Exactly five things qualify,
 # every one of them already owned elsewhere in this file:
 #   - omp's status row and braille-only animation rows, the two furniture rows
 #     that already bound a bare composer's wrap region;
+#   - omp's `esc Inspect ...` Subagents navigation hint;
 #   - claude's permission-mode hint row (FM_COMPOSER_MODE_HINT_RE_DEFAULT);
 #   - a row leading with an agent glyph OTHER than the one that proved the
 #     envelope. One pane runs one harness, so a foreign prompt glyph is never
@@ -1331,6 +1379,7 @@ _fm_composer_row_is_composer_furniture() {  # <trimmed-row> <proof-glyph>
   [ -n "$row" ] || return 1
   _fm_composer_row_is_omp_status "$row" && return 0
   _fm_composer_row_is_braille_furniture "$row" && return 0
+  _fm_composer_row_is_subagents_hint "$row" && return 0
   fm_composer_idle_matches "$row" \
     "${FM_COMPOSER_MODE_HINT_RE:-$FM_COMPOSER_MODE_HINT_RE_DEFAULT}" sensitive && return 0
   fm_composer_leading_agent_glyph_var glyph "$row" || return 1
@@ -1473,6 +1522,7 @@ _fm_composer_select_cursorless() {
       fm_composer_row_has_edge "$trimmed" && break
       _fm_composer_row_is_omp_status "$trimmed" && break
       _fm_composer_row_is_braille_furniture "$trimmed" && break
+      _fm_composer_row_is_subagents_hint "$trimmed" && break
       FM_COMPOSER_SELECTED_LAST=$next
       next=$((next + 1))
     done
@@ -1602,6 +1652,10 @@ EOF
     case "$cy" in *[!0-9]*) printf 'unknown'; return 0 ;; esac
   fi
   plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
+  if _fm_composer_has_live_subagents "$plain"; then
+    printf 'unknown'
+    return 0
+  fi
   _fm_composer_scan_screen "$plain" "$cy"
   if [ -n "$cy" ]; then
     # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
