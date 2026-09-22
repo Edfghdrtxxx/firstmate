@@ -486,7 +486,7 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
 test_matrix_omp_subagents_hint_and_live_reviewers() {
-  local subagents_hint real_prompt starred
+  local subagents_hint real_prompt historical_panel historical_live starred
   subagents_hint=$'transcript line
 
 Subagents
@@ -502,6 +502,21 @@ esc Inspect subagents'
 esc Inspect the deployment'
   assert_screen "ordinary esc Inspect prompt text stays pending" pending "$CAPS_STYLED" "$real_prompt"
   assert_screen "ordinary esc Inspect prompt text stays unknown without styling" unknown "$CAPS_PLAIN" "$real_prompt"
+  historical_panel=$'transcript line
+Subagents
+├─ reviewer finished
+
+❯
+esc Inspect the deployment'
+  assert_screen "a historical Subagents block does not hide current prompt text" pending "$CAPS_STYLED" "$historical_panel"
+  assert_screen "a historical Subagents block stays unknown without styling" unknown "$CAPS_PLAIN" "$historical_panel"
+  historical_live=$'transcript line
+Subagents
+├─ reviewer ★ running
+
+❯
+esc Inspect the deployment'
+  assert_screen "a historical live reviewer block does not make current prompt busy" pending "$CAPS_STYLED" "$historical_live"
   starred=$'transcript line
 
 Subagents

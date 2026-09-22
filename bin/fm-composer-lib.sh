@@ -719,7 +719,7 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
 #   [identity]   "<agent>\t<status>" from the backend's native identity probe,
 #                or `probe-absent` when the probe found no live identity; only
 #                meaningful when caps carry identity=1.
-# Prints exactly one verdict: empty | pending | pending-unproven | unknown,
+# Prints exactly one verdict: empty | pending | pending-unproven | busy | unknown,
 # or the internal sentinel `need-identity` when caps declare identity=1, no
 # identity result was supplied, and the verdict depends on it. Adapters answer
 # `need-identity` by running their identity probe once and re-calling with
@@ -1182,70 +1182,58 @@ _fm_composer_row_is_omp_status() {  # <trimmed-row>
   fm_composer_idle_matches "$1" "${FM_COMPOSER_OMP_STATUS_RE:-$FM_COMPOSER_OMP_STATUS_RE_DEFAULT}" sensitive
 }
 
-# _fm_composer_has_subagents_panel: 0 when a Subagents heading is followed by
-# a tree row.
-_fm_composer_has_subagents_panel() {  # <plain-screen>
-  local line trimmed in_tree=0 subagents_glyph=''
-  while IFS= read -r line; do
-    trimmed=$line
+_fm_composer_subagents_state_for_bare_row() {  # <plain-screen> <bare-row>
+  local plain=$1 bare=$2 row trimmed glyph='' tree=0 live=0
+  [ "$bare" -ge 0 ] 2>/dev/null || return 1
+  trimmed=$(_fm_composer_screen_row "$bare" "$plain")
+  fm_composer_normalize_trim_var trimmed
+  fm_composer_leading_agent_glyph_var glyph "$trimmed" || return 1
+  trimmed=${trimmed#*"$glyph"}
+  fm_composer_normalize_trim_var trimmed
+  [ -z "$trimmed" ] || return 1
+  row=$((bare + 1))
+  trimmed=$(_fm_composer_screen_row "$row" "$plain")
+  fm_composer_normalize_trim_var trimmed
+  [ "$trimmed" = 'esc Inspect subagents' ] || return 1
+  row=$((bare - 1))
+  while [ "$row" -ge 0 ]; do
+    trimmed=$(_fm_composer_screen_row "$row" "$plain")
     fm_composer_normalize_trim_var trimmed
-    if [ "$in_tree" = 1 ]; then
-      case "$trimmed" in
-        '├─'*|'└─'*) return 0 ;;
-        '') in_tree=0 ;;
-      esac
-      if [ "$in_tree" = 1 ] \
-        && fm_composer_leading_agent_glyph_var subagents_glyph "$trimmed"; then
-        in_tree=0
-      fi
-    fi
+    [ -n "$trimmed" ] || { row=$((row - 1)); continue; }
+    break
+  done
+  while [ "$row" -ge 0 ]; do
+    trimmed=$(_fm_composer_screen_row "$row" "$plain")
+    fm_composer_normalize_trim_var trimmed
     case "$trimmed" in
-      Subagents|Subagents:|Subagents[[:space:]]*) in_tree=1 ;;
+      '├─'*|'└─'*)
+        tree=1
+        case "$trimmed" in *'★'*) live=1 ;; esac
+        row=$((row - 1))
+        ;;
+      *) break ;;
     esac
-  done <<EOF
-$1
-EOF
-  return 1
-}
-
-# _fm_composer_row_is_subagents_hint: 0 when the row is omp's navigation hint
-# inside a proven Subagents panel.
-_fm_composer_row_is_subagents_hint() {  # <plain-screen> <trimmed-row>
-  local plain=$1 row=$2
-  _fm_composer_has_subagents_panel "$plain" || return 1
-  case "$row" in
-    esc[[:space:]]Inspect[[:space:]]*) return 0 ;;
+  done
+  [ "$tree" = 1 ] || return 1
+  trimmed=$(_fm_composer_screen_row "$row" "$plain")
+  fm_composer_normalize_trim_var trimmed
+  case "$trimmed" in
+    Subagents|Subagents:|Subagents[[:space:]]*) ;;
+    *) return 1 ;;
   esac
-  return 1
+  if [ "$live" = 1 ]; then
+    printf 'busy'
+  else
+    printf 'panel'
+  fi
 }
 
-# _fm_composer_has_live_subagents: 0 when the screen contains a starred row
-# beneath omp's Subagents heading. A star means a reviewer is still running, so
-# the parent pane is working and must not be treated as an input target.
-_fm_composer_has_live_subagents() {  # <plain-screen>
-  local line trimmed glyph='' in_tree=0
-  while IFS= read -r line; do
-    trimmed=$line
-    fm_composer_normalize_trim_var trimmed
-    if [ "$in_tree" = 1 ]; then
-      case "$trimmed" in
-        '├─'*|'└─'*)
-          case "$trimmed" in *'★'*) return 0 ;; esac
-          ;;
-        '') in_tree=0 ;;
-      esac
-      if [ "$in_tree" = 1 ] \
-        && fm_composer_leading_agent_glyph_var glyph "$trimmed"; then
-        in_tree=0
-      fi
-    fi
-    case "$trimmed" in
-      Subagents|Subagents:|Subagents[[:space:]]*) in_tree=1 ;;
-    esac
-  done <<EOF
-$1
-EOF
-  return 1
+_fm_composer_row_is_subagents_hint() {  # <plain-screen> <row>
+  local plain=$1 row=$2 state bare
+  case "$row" in ''|*[!0-9]*) return 1 ;; esac
+  bare=$((row - 1))
+  state=$(_fm_composer_subagents_state_for_bare_row "$plain" "$bare") || return 1
+  [ "$state" = panel ] || [ "$state" = busy ]
 }
 
 # _fm_composer_row_is_braille_furniture: 0 when the row is non-blank and its
@@ -1292,7 +1280,7 @@ _fm_composer_wrap_region_ok() {  # <plain-screen> <glyph-row> <cursor-row>
     if fm_composer_row_has_edge "$trimmed"; then return 1; fi
     if _fm_composer_row_is_omp_status "$trimmed"; then return 1; fi
     if _fm_composer_row_is_braille_furniture "$trimmed"; then return 1; fi
-    if _fm_composer_row_is_subagents_hint "$plain" "$trimmed"; then
+    if _fm_composer_row_is_subagents_hint "$plain" "$row"; then
       row=$((row + 1))
       continue
     fi
@@ -1317,7 +1305,7 @@ _fm_composer_classify_bare_wrap() {  # <screen> <plain> <styled> <glyph-row> <cu
     trimmed=$raw
     fm_composer_normalize_trim_var trimmed
     if [ "$row" -ne "$g" ] \
-       && _fm_composer_row_is_subagents_hint "$plain" "$trimmed"; then
+       && _fm_composer_row_is_subagents_hint "$plain" "$row"; then
       row=$((row + 1))
       continue
     fi
@@ -1395,7 +1383,7 @@ _fm_composer_leftbar_floor_row() {  # <trimmed-row>
 # every one of them already owned elsewhere in this file:
 #   - omp's status row and braille-only animation rows, the two furniture rows
 #     that already bound a bare composer's wrap region;
-#   - omp's `esc Inspect ...` Subagents navigation hint;
+#   - omp's `esc Inspect subagents` navigation hint;
 #   - claude's permission-mode hint row (FM_COMPOSER_MODE_HINT_RE_DEFAULT);
 #   - a row leading with an agent glyph OTHER than the one that proved the
 #     envelope. One pane runs one harness, so a foreign prompt glyph is never
@@ -1405,12 +1393,12 @@ _fm_composer_leftbar_floor_row() {  # <trimmed-row>
 # a row leading with the SAME glyph the envelope was proven by (`❯ my typed
 # draft`, which is a live composer) - is NOT furniture, so the envelope above
 # it stays stale and the verdict stays a refusal.
-_fm_composer_row_is_composer_furniture() {  # <trimmed-row> <proof-glyph> <plain-screen>
-  local row=$1 proof=$2 plain=$3 glyph=''
+_fm_composer_row_is_composer_furniture() {  # <trimmed-row> <proof-glyph> <plain-screen> <row>
+  local row=$1 proof=$2 plain=$3 row_number=$4 glyph=''
   [ -n "$row" ] || return 1
   _fm_composer_row_is_omp_status "$row" && return 0
   _fm_composer_row_is_braille_furniture "$row" && return 0
-  _fm_composer_row_is_subagents_hint "$plain" "$row" && return 0
+  _fm_composer_row_is_subagents_hint "$plain" "$row_number" && return 0
   fm_composer_idle_matches "$row" \
     "${FM_COMPOSER_MODE_HINT_RE:-$FM_COMPOSER_MODE_HINT_RE_DEFAULT}" sensitive && return 0
   fm_composer_leading_agent_glyph_var glyph "$row" || return 1
@@ -1473,7 +1461,7 @@ _fm_composer_locate_footer_zone() {  # <plain>
     trimmed=$(_fm_composer_screen_row "$next" "$plain")
     fm_composer_normalize_trim_var trimmed
     [ -n "$trimmed" ] || break
-    _fm_composer_row_is_composer_furniture "$trimmed" "$proof" "$plain" || return 1
+    _fm_composer_row_is_composer_furniture "$trimmed" "$proof" "$plain" "$next" || return 1
     FM_COMPOSER_FOOTER_LAST=$next
     next=$((next + 1))
   done
@@ -1553,7 +1541,7 @@ _fm_composer_select_cursorless() {
       fm_composer_row_has_edge "$trimmed" && break
       _fm_composer_row_is_omp_status "$trimmed" && break
       _fm_composer_row_is_braille_furniture "$trimmed" && break
-      _fm_composer_row_is_subagents_hint "$plain" "$trimmed" && break
+      _fm_composer_row_is_subagents_hint "$plain" "$next" && break
       FM_COMPOSER_SELECTED_LAST=$next
       next=$((next + 1))
     done
@@ -1668,7 +1656,7 @@ EOF
 
 fm_composer_classify_screen() {  # <caps> <screen> [cursor_row] [identity]
   local caps=$1 screen=$2 cy=${3:-} identity=${4:-}
-  local styled=0 cursor=0 has_identity=0 kv plain
+  local styled=0 cursor=0 has_identity=0 kv plain subagents_state
   while IFS= read -r kv; do
     case "$kv" in
       styled=1) styled=1 ;;
@@ -1683,11 +1671,13 @@ EOF
     case "$cy" in *[!0-9]*) printf 'unknown'; return 0 ;; esac
   fi
   plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
-  if _fm_composer_has_live_subagents "$plain"; then
+  _fm_composer_scan_screen "$plain" "$cy"
+  subagents_state=$(_fm_composer_subagents_state_for_bare_row \
+    "$plain" "$FM_COMPOSER_SCAN_BARE_ROW" 2>/dev/null || true)
+  if [ "$subagents_state" = busy ]; then
     printf 'busy'
     return 0
   fi
-  _fm_composer_scan_screen "$plain" "$cy"
   if [ -n "$cy" ]; then
     # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
     if [ "$FM_COMPOSER_SCAN_UNSAFE" = 1 ]; then
