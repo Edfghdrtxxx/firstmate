@@ -1,0 +1,28 @@
+=== bin/fm-test-run.sh --list --changed --base 1e0e7734 (target commit checked out) ===
+tests/fm-task-delivery.test.sh
+tests/fm-test-isolation-proof.test.sh
+tests/fm-test-run.test.sh
+tests/fm-tmux-submit-busy.test.sh
+tests/fm-trace-context-lib.test.sh
+tests/fm-transition-lib.test.sh
+tests/fm-vendor-auth-probe.test.sh
+tests/fm-test-fixtures.test.sh
+
+=== selector on base commit 1e0e7734 (extracted families_for_changed_path) ===
+__unmapped__:.agents/skills/auto-research/evolution.md
+
+=== selector on target commit 9b65b260 ===
+.agents/skills/auto-research/evolution.md -> pure-contract-unit 
+.agents/skills/auto-research/SKILL.md -> pure-contract-unit 
+.agents/skills/reckon/SKILL.md -> pure-contract-unit 
+
+=== bin/fm-doc-audience-check.sh ===
+fm-doc-audience-check: ok surfaces=108 local_links=467
+
+=== reckon-referenced commands, isolated FM_HOME ===
+count: 0
+tasks: 0 tasks in this backlog
+help[2]:
+  - "Run `tasks-axi add <id> \"<title>\"` to add a task"
+  - Run `tasks-axi list --state done` to see completed work
+wake-drain exit: 0
