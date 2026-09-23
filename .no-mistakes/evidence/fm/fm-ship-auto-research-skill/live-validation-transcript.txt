@@ -1,4 +1,48 @@
-=== bin/fm-test-run.sh --list --changed --base 1e0e7734 (target commit checked out) ===
+Live validation transcript — fm/fm-ship-auto-research-skill
+base 8c47279f54e379e8ffa86a8d3a5b568f23ccf281 -> target ac0e5f7b5a1f9619dd17b784cee9796c0a52da85
+
+=== Scenario 1: changed-test selection maps the new skill companion file ===
+
+PRE-FIX reproduction (base-revision bin/fm-test-run.sh run against this branch's diff):
+$ bin/fm-test-run-prefix.sh --list --changed --base 8c47279f54e379e8ffa86a8d3a5b568f23ccf281
+fm-test-run: no changed-test mapping for source path: .agents/skills/auto-research/evolution.md
+EXIT=2
+
+POST-FIX (target commit script, same command):
+$ bin/fm-test-run.sh --list --changed --base 8c47279f54e379e8ffa86a8d3a5b568f23ccf281
+tests/fm-agy-harness.test.sh
+tests/fm-arm-pretool-check.test.sh
+tests/fm-ask-user-authority.test.sh
+tests/fm-bearings-board.test.sh
+tests/fm-brief.test.sh
+tests/fm-calm-claude-mod.test.sh
+tests/fm-calm-pi-extension.test.sh
+tests/fm-captain-hold-lifecycle.test.sh
+tests/fm-cd-pretool-check.test.sh
+tests/fm-classify-decision-key.test.sh
+tests/fm-composer-ghost.test.sh
+tests/fm-composer-lib.test.sh
+tests/fm-crew-state.test.sh
+tests/fm-devin-harness.test.sh
+tests/fm-documentation-audiences.test.sh
+tests/fm-dod-lib.test.sh
+tests/fm-ensure-agents-md.test.sh
+tests/fm-grok-harness.test.sh
+tests/fm-harness-adapter-references.test.sh
+tests/fm-harness-precedence.test.sh
+tests/fm-herdr-lab.test.sh
+tests/fm-kimi-harness.test.sh
+tests/fm-lint-workflows.test.sh
+tests/fm-lint.test.sh
+tests/fm-muse-harness.test.sh
+tests/fm-omp-harness.test.sh
+tests/fm-operational-input.test.sh
+tests/fm-pi-primary-types.test.sh
+tests/fm-rovo-harness.test.sh
+tests/fm-send-popup-settle.test.sh
+tests/fm-send-settle.test.sh
+tests/fm-subagent-pretool-check.test.sh
+tests/fm-supervision-instructions.test.sh
 tests/fm-task-delivery.test.sh
 tests/fm-test-isolation-proof.test.sh
 tests/fm-test-run.test.sh
@@ -7,22 +51,37 @@ tests/fm-trace-context-lib.test.sh
 tests/fm-transition-lib.test.sh
 tests/fm-vendor-auth-probe.test.sh
 tests/fm-test-fixtures.test.sh
+EXIT=0   (pure-contract-unit family selected; no refusal)
 
-=== selector on base commit 1e0e7734 (extracted families_for_changed_path) ===
-__unmapped__:.agents/skills/auto-research/evolution.md
-
-=== selector on target commit 9b65b260 ===
-.agents/skills/auto-research/evolution.md -> pure-contract-unit 
-.agents/skills/auto-research/SKILL.md -> pure-contract-unit 
-.agents/skills/reckon/SKILL.md -> pure-contract-unit 
-
-=== bin/fm-doc-audience-check.sh ===
+=== Scenario 2: documentation-audiences inventory validates with the 3 new entries ===
+$ bin/fm-doc-audience-check.sh
 fm-doc-audience-check: ok surfaces=108 local_links=467
+EXIT=0
 
-=== reckon-referenced commands, isolated FM_HOME ===
-count: 0
-tasks: 0 tasks in this backlog
-help[2]:
-  - "Run `tasks-axi add <id> \"<title>\"` to add a task"
-  - Run `tasks-axi list --state done` to see completed work
-wake-drain exit: 0
+$ bash tests/fm-documentation-audiences.test.sh
+ok - documentation inventory classifies every maintained prose surface exactly once
+ok - classification, setup routing, and maintained-prose scope fail safely
+ok - required documentation owner pointers cannot silently disappear
+ok - local links resolve while dates, versions, commands, and incident prose remain semantically reviewed
+EXIT=0
+
+=== Scenario 3: fm-test-run suite (owns families_for_changed_path arm ordering) ===
+$ bash tests/fm-test-run.test.sh
+... all assertions ok, including:
+ok - a changed shared test fixture selects its readers while an unread tests/ path still refuses
+(harness-adapters SKILL.md/references precedence arms exercised in the changed-selection test)
+EXIT=0
+
+=== Scenario 4: skill discovery surface ===
+.claude/skills is a tracked git symlink (mode 120000) -> ../.agents/skills
+.claude/skills/auto-research/SKILL.md   resolves: True
+.claude/skills/auto-research/evolution.md resolves: True
+.claude/skills/reckon/SKILL.md          resolves: True
+
+Frontmatter parses as YAML for all 24 skills; every `name:` matches its directory.
+auto-research: user-invocable=false (internal trigger-only, matches AGENTS.md section 13 listing)
+reckon:        user-invocable=true  (matches new README /reckon row)
+
+AGENTS.md section 13 trigger list: 15 skills listed, 0 missing directories, auto-research present.
+README user-invocable table rows == frontmatter user-invocable:true set exactly:
+  [afk, ahoy, bearings, quiet, reckon, stow, updatefirstmate] — no unlisted invocable skill.
