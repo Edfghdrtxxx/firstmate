@@ -241,7 +241,7 @@ So before the reset, make sure the important open work you are holding in contex
 
 Judge for yourself what is important and which record each thing belongs to, and write it through the owner that already governs that record.
 One bound holds: this covers the open work you are actually holding in context, not the records at large.
-It is not a reconciliation of durable records against repository or forge reality, cannot become one on input this volatile, and must never be reported as one.
+It is not a reconciliation of durable records against repository or forge reality, cannot become one on input this volatile, and must never be reported as one; the `reckon` skill owns that audit.
 Where the right correction is a judgment you cannot make, leave the record alone and raise the question instead of guessing.
 
 ## One-time migration of unmarked entries
