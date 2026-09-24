@@ -67,11 +67,13 @@ fm_control_harnesses() {
 }
 
 fm_control_harness_supported() {  # <harness>
-  local harness
+  local harness found=1
+  # Drain the whole table: returning mid-read SIGPIPEs fm_control_harnesses'
+  # printf, which leaks "write error: Broken pipe" onto the caller's stderr.
   while read -r harness; do
-    [ "$harness" = "${1-}" ] && return 0
+    [ "$harness" = "${1-}" ] && found=0
   done < <(fm_control_harnesses)
-  return 1
+  return "$found"
 }
 
 # The verified adapter a RECORDED harness value belongs to. Every table below
