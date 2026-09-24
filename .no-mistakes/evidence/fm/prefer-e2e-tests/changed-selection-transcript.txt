@@ -1,0 +1,35 @@
+Scenario: fm-test-run.sh --changed selection for non-SKILL skill docs
+=====================================================================
+
+Fixture: throwaway git repo with a probe suite (fm-ask-user-authority.test.sh,
+family pure-contract-unit) and a changed file
+.agents/skills/auto-research/evolution.md (non-SKILL skill doc, same shape as
+the file this PR adds).
+
+OLD runner (bin/fm-test-run.sh @ base 9296f9b):
+  $ ./bin/fm-test-run.sh --list --changed --base HEAD
+  fm-test-run: no changed-test mapping for source path: .agents/skills/auto-research/evolution.md
+  exit=2
+
+NEW runner (bin/fm-test-run.sh @ target 7b81046):
+  $ ./bin/fm-test-run.sh --list --changed --base HEAD
+  tests/fm-ask-user-authority.test.sh
+  exit=0
+
+Precedence check (new runner): adding
+.agents/skills/harness-adapters/references/common/dispatch.md plus a probe
+fm-harness-adapter-instructions-live-e2e.test.sh (family live-harness-optin):
+  $ ./bin/fm-test-run.sh --list --changed --base HEAD
+  tests/fm-ask-user-authority.test.sh
+  tests/fm-harness-adapter-instructions-live-e2e.test.sh
+  exit=0
+  -> deeper skill path still hits its earlier, more specific arm
+     (pure-contract-unit + live-harness-optin); the new broad arm does not
+     shadow it.
+
+Real worktree run (this PR's actual changed-file set vs base):
+  $ bin/fm-test-run.sh --list --changed --base 9296f9b9d2566797b9a9aecaa5956bb8e471d2cd
+  exit=0; selected the pure-contract-unit family (38 scripts incl.
+  fm-test-run.test.sh, fm-documentation-audiences.test.sh) plus
+  fm-test-fixtures.test.sh. Under the old mapping this run would have died on
+  .agents/skills/auto-research/evolution.md.

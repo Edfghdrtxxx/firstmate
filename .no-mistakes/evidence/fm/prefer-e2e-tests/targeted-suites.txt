@@ -1,0 +1,19 @@
+Targeted suite runs (worktree @ 7b81046)
+========================================
+
+$ tests/fm-documentation-audiences.test.sh
+ok - documentation inventory classifies every maintained prose surface exactly once
+ok - classification, setup routing, and maintained-prose scope fail safely
+ok - required documentation owner pointers cannot silently disappear
+ok - local links resolve while dates, versions, commands, and incident prose remain semantically reviewed
+exit=0
+(Validates the new documentation-audiences.json entries for
+ .agents/skills/auto-research/SKILL.md, auto-research/evolution.md, and
+ reckon/SKILL.md, plus local-link integrity of the README/AGENTS/architecture
+ reckon pointers.)
+
+$ tests/fm-test-run.test.sh
+39/39 checks ok, exit=0 (full output truncated here; includes
+"changed selection covers dependents, fails closed for live unmapped source,
+and accepts retired unconsumed source" and the SKILL.md /
+harness-adapters-references selection pins).
