@@ -565,6 +565,7 @@ seed_exit_cleanup() {
   seed_rollback
   seed_registry_lock_release
 }
+SEED_ID=
 SEED_HOME=
 SEED_HOME_ACQUIRED=0
 SEED_HOME_CREATED=0
@@ -645,24 +646,58 @@ seed_rollback_home_retire_record_write() {  # <id> <home> <phase>
   mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
 }
 
+seed_rollback_home_retire_record_foreign() {  # <record> <abs_home>
+  local record=$1 home=$2 record_home
+  [ -f "$record" ] || return 1
+  record_home=$(sed -n 's/^home=//p' "$record" | head -1)
+  [ -n "$record_home" ] && [ "$record_home" != "$home" ] \
+    && { [ -e "$record_home" ] || [ -L "$record_home" ]; }
+}
+
+# Records are keyed by mate id alone, so a rollback obligation under an id that
+# already tracks a different surviving home must not overwrite or delete it.
+seed_rollback_home_retire_record_clear() {  # <record> <abs_home>
+  local record=$1 home=$2
+  [ -n "$record" ] || return 0
+  [ -f "$record" ] || return 0
+  if seed_rollback_home_retire_record_foreign "$record" "$home"; then
+    echo "warning: leaving retirement obligation $record in place; it still names $(sed -n 's/^home=//p' "$record" | head -1)" >&2
+    return 0
+  fi
+  rm -f -- "$record"
+}
+
 seed_return_treehouse_home() {
-  local home=$1 abs_home marker_id='' retire_record=''
+  local home=$1 abs_home marker_id='' record_id='' retire_record=''
   abs_home=$(seed_rollback_target "$home" "treehouse-acquired home") || return 0
   if ! command -v treehouse >/dev/null 2>&1; then
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; treehouse command not found" >&2
     return 0
   fi
   [ -f "$abs_home/.fm-secondmate-home" ] && marker_id=$(cat "$abs_home/.fm-secondmate-home" 2>/dev/null || true)
-  if [ -n "$marker_id" ] \
-     && seed_rollback_home_retire_record_write "$marker_id" "$abs_home" recorded; then
-    retire_record="$STATE/$marker_id.home-retire"
+  # A home returned before its identity marker was written still carries the
+  # obligation under the seed id: reconcile treats an absent marker as
+  # unresolved rather than proof the slot moved on.
+  record_id=$marker_id
+  [ -n "$record_id" ] || record_id=${SEED_ID:-}
+  if [ -n "$record_id" ]; then
+    retire_record="$STATE/$record_id.home-retire"
+    if seed_rollback_home_retire_record_foreign "$retire_record" "$abs_home"; then
+      echo "warning: retirement obligation $retire_record still names $(sed -n 's/^home=//p' "$retire_record" | head -1); leaving it untouched" >&2
+      retire_record=
+    elif ! seed_rollback_home_retire_record_write "$record_id" "$abs_home" recorded; then
+      retire_record=
+    fi
   fi
   ( cd "$FM_ROOT" && treehouse return --force "$abs_home" >/dev/null ) || {
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; lease may still be held" >&2
-    [ -z "$retire_record" ] || rm -f -- "$retire_record"
+    seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
     return 0
   }
-  [ -z "$retire_record" ] || seed_rollback_home_retire_record_write "$marker_id" "$abs_home" returned || true
+  if [ -n "$retire_record" ] \
+     && ! seed_rollback_home_retire_record_foreign "$retire_record" "$abs_home"; then
+    seed_rollback_home_retire_record_write "$record_id" "$abs_home" returned || true
+  fi
   ( cd "$FM_ROOT" && treehouse destroy --yes "$abs_home" >/dev/null 2>&1 ) || true
   if [ -e "$abs_home" ] || [ -L "$abs_home" ]; then
     if [ -n "$retire_record" ]; then
@@ -671,7 +706,7 @@ seed_return_treehouse_home() {
       echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback; inspect and remove it manually" >&2
     fi
   else
-    [ -z "$retire_record" ] || rm -f -- "$retire_record"
+    seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
   fi
 }
 
@@ -926,6 +961,7 @@ seed_home() {
   done
 
   SEED_ROLLBACK_ACTIVE=1
+  SEED_ID=$id
   SEED_COMMITTED=0
   SEED_HOME=
   SEED_HOME_ACQUIRED=0

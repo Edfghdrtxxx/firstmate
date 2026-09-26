@@ -2666,6 +2666,26 @@ firstmate_home_retire_record_write() {  # <record> <id> <home> <phase>
   } > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
 }
+firstmate_home_retire_record_foreign() {  # <record> <abs_home_path>
+  local record=$1 home=$2 record_home
+  [ -f "$record" ] || return 1
+  record_home=$(sed -n 's/^home=//p' "$record" | head -1)
+  [ -n "$record_home" ] && [ "$record_home" != "$home" ] \
+    && { [ -e "$record_home" ] || [ -L "$record_home" ]; }
+}
+
+# Records are keyed by mate id alone, so a second obligation under the same id
+# must never erase a still-surviving obligation that names a different home.
+firstmate_home_retire_record_clear() {  # <record> <abs_home_path>
+  local record=$1 home=$2
+  [ -n "$record" ] || return 0
+  [ -f "$record" ] || return 0
+  if firstmate_home_retire_record_foreign "$record" "$home"; then
+    echo "warning: leaving retirement obligation $record in place; it still names $(sed -n 's/^home=//p' "$record" | head -1)" >&2
+    return 0
+  fi
+  rm -f -- "$record"
+}
 
 # Remove a treehouse slot directory after its lease was released. `treehouse
 # destroy` re-checks its own guards (unleased, merged, clean, idle), so a slot
@@ -2718,14 +2738,19 @@ remove_firstmate_home() {
     if [ -n "$expected_id" ]; then
       retire_record=$(firstmate_home_retire_record_path "$expected_id") || retire_record=
       if [ -n "$retire_record" ]; then
-        retire_phase=
-        [ -f "$retire_record" ] && retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
-        if [ "$retire_phase" != returned ]; then
-          firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" recorded || {
-            echo "error: cannot record the $label retirement obligation at $retire_record; leaving the leased home in place" >&2
-            restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
-            return 1
-          }
+        if firstmate_home_retire_record_foreign "$retire_record" "$abs_home_path"; then
+          echo "warning: retirement obligation $retire_record still names $(sed -n 's/^home=//p' "$retire_record" | head -1); leaving it untouched" >&2
+          retire_record=
+        else
+          retire_phase=
+          [ -f "$retire_record" ] && retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
+          if [ "$retire_phase" != returned ]; then
+            firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" recorded || {
+              echo "error: cannot record the $label retirement obligation at $retire_record; leaving the leased home in place" >&2
+              restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+              return 1
+            }
+          fi
         fi
       fi
     fi
@@ -2736,7 +2761,8 @@ remove_firstmate_home() {
     # and refuse, never probing whether a held lease might secretly be gone.
     if teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label"; then
       return_rc=0
-      if [ -n "$retire_record" ]; then
+      if [ -n "$retire_record" ] \
+         && ! firstmate_home_retire_record_foreign "$retire_record" "$abs_home_path"; then
         firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" returned || true
       fi
     else
@@ -2752,19 +2778,23 @@ remove_firstmate_home() {
         firstmate_home_remove_returned_slot "$abs_home_path" "$label" || :
       fi
       if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
-        echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
+        if [ "$retire_phase" = returned ]; then
+          echo "error: the lease on $label $abs_home_path is released but the returned slot could not be removed" >&2
+        else
+          echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
+        fi
         restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
         return "$return_rc"
       fi
       # The directory is gone despite the return error: the lease is released
       # and the retirement is complete, so clear the obligation.
-      [ -z "$retire_record" ] || rm -f -- "$retire_record"
+      firstmate_home_retire_record_clear "$retire_record" "$abs_home_path"
       rm -rf -- "$process_event_backup"
       return 0
     fi
     if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
       if firstmate_home_remove_returned_slot "$abs_home_path" "$label"; then
-        [ -z "$retire_record" ] || rm -f -- "$retire_record"
+        firstmate_home_retire_record_clear "$retire_record" "$abs_home_path"
       else
         if [ -n "$retire_record" ]; then
           echo "warning: $label $abs_home_path could not be removed after its lease was released; the retirement obligation stays recorded at $retire_record and the next session start retries and reports it" >&2
@@ -2773,7 +2803,7 @@ remove_firstmate_home() {
         fi
       fi
     else
-      [ -z "$retire_record" ] || rm -f -- "$retire_record"
+      firstmate_home_retire_record_clear "$retire_record" "$abs_home_path"
     fi
     [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
     return 0

@@ -449,6 +449,80 @@ test_home_seed_does_not_return_unsafe_acquired_home() {
   pass "home seeding leaves unsafe acquired active homes untouched"
 }
 
+test_home_seed_preserves_foreign_obligation_during_rollback() {
+  local home acquired acquired_abs stranded stranded_abs fakebin log err record
+  home="$TMP_ROOT/dash-foreign-home"
+  acquired="$TMP_ROOT/dash-foreign-acquired-home"
+  stranded="$TMP_ROOT/dash-foreign-stranded-home"
+  err="$TMP_ROOT/dash-foreign.err"
+  mkdir -p "$home/projects" "$home/data" "$home/state" "$stranded"
+  fm_git_init_commit "$home/projects/alpha"
+  fm_git_add_origin "$home/projects/alpha" "$TMP_ROOT/remotes/dash-foreign-alpha.git"
+  printf '%s\n' '- alpha [direct-PR] - alpha project (added 2026-06-22)' > "$home/data/projects.md"
+  git clone --quiet "$ROOT" "$acquired"
+  acquired_abs=$(cd "$acquired" && pwd -P)
+  stranded_abs=$(cd "$stranded" && pwd -P)
+  printf 'other\n' > "$acquired/.fm-secondmate-home"
+  record="$home/state/other.home-retire"
+  { printf 'id=other\n'; printf 'home=%s\n' "$stranded_abs"; printf 'phase=returned\n'; printf 'at=1\n'; } > "$record"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/dash-foreign-fake")
+  log="$TMP_ROOT/dash-foreign-fake/tmux.log"
+  printf 'dash\n' > "$TMP_ROOT/dash-foreign-fake/lease"
+
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TREEHOUSE_HOME="$acquired" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$TMP_ROOT/dash-foreign-fake/lease" \
+    FM_SECONDMATE_CHARTER='dash acquired scope' FM_SECONDMATE_SCOPE='dash acquired scope' \
+    "$ROOT/bin/fm-home-seed.sh" dash - alpha >/dev/null 2>"$err"; then
+    fail "seed reused an acquired home marked for another secondmate"
+  fi
+  [ ! -e "$acquired" ] || fail "rollback did not destroy the returned acquired home"
+  [ -f "$record" ] || fail "rollback erased an obligation naming a different surviving home"
+  grep -F "home=$stranded_abs" "$record" >/dev/null \
+    || fail "rollback rewrote the obligation away from the surviving home"
+  grep -F "leaving it untouched" "$err" >/dev/null \
+    || fail "rollback did not warn about the preserved foreign obligation"
+  [ -d "$stranded" ] || fail "rollback touched the home named by the foreign obligation"
+  pass "home seed rollback preserves a same-id obligation that names a different surviving home"
+}
+
+test_home_seed_records_obligation_for_pre_marker_rollback() {
+  local home acquired acquired_abs fakebin log err record lease
+  home="$TMP_ROOT/dash-early-home"
+  acquired="$TMP_ROOT/dash-early-acquired-home"
+  err="$TMP_ROOT/dash-early.err"
+  mkdir -p "$home/projects" "$home/data" "$home/state"
+  fm_git_init_commit "$home/projects/alpha"
+  fm_git_add_origin "$home/projects/alpha" "$TMP_ROOT/remotes/dash-early-alpha.git"
+  printf '%s\n' '- alpha [direct-PR] - alpha project (added 2026-06-22)' > "$home/data/projects.md"
+  git clone --quiet "$ROOT" "$acquired"
+  acquired_abs=$(cd "$acquired" && pwd -P)
+  fakebin=$(make_fake_tmux "$TMP_ROOT/dash-early-fake")
+  log="$TMP_ROOT/dash-early-fake/tmux.log"
+  lease="$TMP_ROOT/dash-early-fake/lease"
+  printf 'dash\n' > "$lease"
+
+  # No charter brief and no FM_SECONDMATE_CHARTER: the seed fails after the
+  # lease is acquired but before the .fm-secondmate-home marker is written, so
+  # the removal obligation must land under the seed id, not the marker id.
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TREEHOUSE_HOME="$acquired" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_DESTROY_FAIL=1 \
+    "$ROOT/bin/fm-home-seed.sh" dash - alpha >/dev/null 2>"$err"; then
+    fail "seed succeeded without a filled secondmate charter"
+  fi
+  grep -F 'no filled secondmate charter brief' "$err" >/dev/null \
+    || fail "seed did not fail on the missing charter"
+  grep -F "treehouse return --force $acquired_abs" "$log" >/dev/null \
+    || fail "early rollback did not return the acquired home"
+  [ -d "$acquired" ] || fail "early rollback removed the acquired home despite a failed destroy"
+  [ ! -e "$lease" ] || fail "early rollback left the lease held"
+  record="$home/state/dash.home-retire"
+  [ -f "$record" ] || fail "early rollback did not record a removal obligation under the seed id"
+  grep -F 'id=dash' "$record" >/dev/null || fail "early rollback obligation does not name the seed id"
+  grep -F "home=$acquired_abs" "$record" >/dev/null || fail "early rollback obligation does not name the surviving home"
+  grep -F 'phase=returned' "$record" >/dev/null || fail "early rollback obligation does not record a released lease"
+  pass "home seed rollback records a durable obligation even before the home marker is written"
+}
+
 test_home_seed_rolls_back_failed_clone() {
   local home subhome err missing_remote
   home="$TMP_ROOT/rollback-home"
@@ -1751,6 +1825,97 @@ EOF
     || fail "retirement obligation does not name the retired mate"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null && fail "teardown kept the registry route"
   pass "secondmate teardown records a durable obligation when the returned home resists removal"
+}
+
+test_secondmate_teardown_preserves_foreign_obligation_record() {
+  local home subhome subhome_abs stranded stranded_abs fakebin log lease fmroot record err
+  home="$TMP_ROOT/teardown-foreign-home"
+  subhome="$TMP_ROOT/teardown-foreign-subhome"
+  stranded="$TMP_ROOT/teardown-foreign-stranded"
+  fmroot="$TMP_ROOT/teardown-foreign-fmroot"
+  err="$TMP_ROOT/teardown-foreign.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$stranded"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  subhome_abs=$(cd "$subhome" && pwd -P)
+  stranded_abs=$(cd "$stranded" && pwd -P)
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  record="$home/state/domain.home-retire"
+  { printf 'id=domain\n'; printf 'home=%s\n' "$stranded_abs"; printf 'phase=returned\n'; printf 'at=1\n'; } > "$record"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/teardown-foreign-fake")
+  log="$TMP_ROOT/teardown-foreign-fake/tmux.log"
+  lease="$TMP_ROOT/teardown-foreign-fake/lease"
+  printf 'domain\n' > "$lease"
+
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-foreign-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err" \
+    || fail "teardown failed when an obligation already named a different surviving home"
+  [ ! -d "$subhome" ] || fail "teardown did not remove the current secondmate home"
+  [ -f "$record" ] || fail "teardown erased an obligation naming a different surviving home"
+  grep -F "home=$stranded_abs" "$record" >/dev/null \
+    || fail "teardown rewrote the obligation away from the surviving home"
+  grep -F "leaving it untouched" "$err" >/dev/null \
+    || fail "teardown did not warn about the preserved foreign obligation"
+  [ -d "$stranded" ] || fail "teardown touched the home named by the foreign obligation"
+  pass "secondmate teardown preserves a same-id obligation that names a different surviving home"
+}
+
+test_secondmate_teardown_reports_unremovable_returned_slot() {
+  local home subhome subhome_abs fakebin log fmroot err rc
+  home="$TMP_ROOT/teardown-returned-home"
+  subhome="$TMP_ROOT/teardown-returned-subhome"
+  fmroot="$TMP_ROOT/teardown-returned-fmroot"
+  err="$TMP_ROOT/teardown-returned.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  subhome_abs=$(cd "$subhome" && pwd -P)
+  cat > "$home/state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  { printf 'id=domain\n'; printf 'home=%s\n' "$subhome_abs"; printf 'phase=returned\n'; printf 'at=1\n'; } > "$home/state/domain.home-retire"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/teardown-returned-fake")
+  log="$TMP_ROOT/teardown-returned-fake/tmux.log"
+
+  # No lease file: the fake return fails as 'not a pool directory' while the
+  # record's phase=returned proves the lease was already released, and the
+  # forced destroy failure leaves the slot behind.
+  rc=0
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-returned-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_DESTROY_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "teardown reported success while the returned slot could not be removed"
+  grep -F "the lease on secondmate home $subhome_abs is released but the returned slot could not be removed" "$err" >/dev/null \
+    || fail "teardown misreported a released lease as still held"
+  grep -F "lease may still be held" "$err" >/dev/null \
+    && fail "teardown named the wrong failure for a returned-phase obligation"
+  [ -f "$home/state/domain.home-retire" ] || fail "teardown dropped the surviving retirement obligation"
+  pass "secondmate teardown reports an unremovable returned slot without blaming the lease"
 }
 
 test_secondmate_teardown_pins_retirement_records_outside_redirected_home() {
@@ -3223,6 +3388,8 @@ test_home_seed_returns_treehouse_acquired_home_on_assignment_failure
 test_home_seed_warns_when_acquired_home_return_fails
 test_home_seed_records_obligation_when_acquired_home_resists_removal
 test_home_seed_does_not_return_unsafe_acquired_home
+test_home_seed_preserves_foreign_obligation_during_rollback
+test_home_seed_records_obligation_for_pre_marker_rollback
 test_home_seed_rolls_back_failed_clone
 test_home_seed_refuses_missing_filled_charter
 test_home_seed_refuses_placeholder_charter
@@ -3260,6 +3427,8 @@ test_fm_send_refuses_bare_window_without_home_meta
 test_secondmate_teardown_retires_empty_home
 test_secondmate_teardown_removes_returned_home_and_archives_summary
 test_secondmate_teardown_records_obligation_when_returned_home_resists_removal
+test_secondmate_teardown_preserves_foreign_obligation_record
+test_secondmate_teardown_reports_unremovable_returned_slot
 test_secondmate_teardown_pins_retirement_records_outside_redirected_home
 test_secondmate_teardown_refuses_ambiguous_and_mismatched_registry_bindings
 test_secondmate_teardown_sweeps_process_events_before_removal
