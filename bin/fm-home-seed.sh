@@ -470,7 +470,7 @@ registered_posture_line() {  # <project>
 }
 
 clone_project() {
-  local project=$1 home=$2 src dst url dst_url mode mode_line
+  local project=$1 home=$2 src dst url dst_url mode mode_line seed_default seed_branch
   src="$PROJECTS/$project"
   dst=$(validate_project_destination "$home" "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
@@ -495,7 +495,41 @@ EOF
     return 0
   fi
   url=$(source_origin_url "$project" "$mode" "$src") || return 1
-  git clone --quiet "$url" "$dst"
+  # Seed the project as a hardlinked local clone of the parent's checkout
+  # (`git clone --local` shares the parent's object files at seed time while
+  # keeping a fully independent .git: own refs, own config, own origin, so
+  # fleet-sync and mate workers never mutate the parent's repo). This drops the
+  # per-mate duplicated object store the 2026-09-26 audit measured (~1.7G for
+  # one home). Linked worktrees and --shared/--reference were evaluated and
+  # rejected; docs/secondmate-project-storage.md owns that finding. A failed
+  # local clone falls back to cloning the origin URL directly.
+  if git clone --quiet --local "$src" "$dst" 2>/dev/null; then
+    seed_default=
+    if git -C "$dst" remote set-url origin "$url" \
+       && git -C "$dst" fetch --quiet --prune origin 2>/dev/null \
+       && git -C "$dst" remote set-head origin --auto >/dev/null 2>&1; then
+      seed_default=$(git -C "$dst" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+      seed_default=${seed_default#origin/}
+    fi
+    if [ -z "$seed_default" ] \
+       || ! git -C "$dst" checkout --quiet -B "$seed_default" "origin/$seed_default" 2>/dev/null; then
+      rm -rf -- "$dst"
+      echo "warning: local clone of $project from $src could not be reconciled to origin's default branch; cloning from origin instead" >&2
+      git clone --quiet "$url" "$dst" || return 1
+    else
+      while IFS= read -r seed_branch; do
+        [ -n "$seed_branch" ] || continue
+        [ "$seed_branch" = "$seed_default" ] && continue
+        git -C "$dst" branch -D -- "$seed_branch" >/dev/null 2>&1 || true
+      done <<EOF
+$(git -C "$dst" for-each-ref --format='%(refname:short)' refs/heads)
+EOF
+    fi
+  else
+    rm -rf -- "$dst"
+    echo "warning: local clone of $project from $src failed; cloning from origin instead" >&2
+    git clone --quiet "$url" "$dst" || return 1
+  fi
 }
 
 validate_seed_project() {
@@ -590,17 +624,55 @@ seed_rollback_target() {
   printf '%s\n' "$abs_target"
 }
 
+# Rollback of a treehouse-acquired seed home records the same durable removal
+# obligation retirement uses (state/<id>.home-retire, read by
+# retired_home_reconcile in bin/fm-bootstrap.sh) before releasing the lease,
+# so a slot the destroy step cannot remove is retried and reported at the next
+# locked session start instead of being orphaned with a transient warning.
+seed_rollback_home_retire_record_write() {  # <id> <home> <phase>
+  local id=$1 home=$2 phase=$3 record tmp
+  [ -n "$id" ] || return 1
+  case "$id" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+  record="$STATE/$id.home-retire"
+  mkdir -p -- "$STATE" || return 1
+  tmp="$record.tmp.$$"
+  {
+    printf 'id=%s\n' "$id"
+    printf 'home=%s\n' "$home"
+    printf 'phase=%s\n' "$phase"
+    printf 'at=%s\n' "$(date +%s)"
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
 seed_return_treehouse_home() {
-  local home=$1 abs_home
+  local home=$1 abs_home marker_id='' retire_record=''
   abs_home=$(seed_rollback_target "$home" "treehouse-acquired home") || return 0
   if ! command -v treehouse >/dev/null 2>&1; then
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; treehouse command not found" >&2
     return 0
   fi
+  [ -f "$abs_home/.fm-secondmate-home" ] && marker_id=$(cat "$abs_home/.fm-secondmate-home" 2>/dev/null || true)
+  if [ -n "$marker_id" ] \
+     && seed_rollback_home_retire_record_write "$marker_id" "$abs_home" recorded; then
+    retire_record="$STATE/$marker_id.home-retire"
+  fi
   ( cd "$FM_ROOT" && treehouse return --force "$abs_home" >/dev/null ) || {
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; lease may still be held" >&2
+    [ -z "$retire_record" ] || rm -f -- "$retire_record"
     return 0
   }
+  [ -z "$retire_record" ] || seed_rollback_home_retire_record_write "$marker_id" "$abs_home" returned || true
+  ( cd "$FM_ROOT" && treehouse destroy --yes "$abs_home" >/dev/null 2>&1 ) || true
+  if [ -e "$abs_home" ] || [ -L "$abs_home" ]; then
+    if [ -n "$retire_record" ]; then
+      echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback; the obligation stays recorded at $retire_record and the next locked session start retries and reports it" >&2
+    else
+      echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback; inspect and remove it manually" >&2
+    fi
+  else
+    [ -z "$retire_record" ] || rm -f -- "$retire_record"
+  fi
 }
 
 seed_remove_created_home() {

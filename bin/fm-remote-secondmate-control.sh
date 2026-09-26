@@ -421,14 +421,20 @@ cmd_retire() {
   remote_endpoint_require "$id"
   FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" "$SCRIPT_DIR/fm-guard.sh" || true
+  # STATE/DATA are redirected to the control plane inside the mate's home,
+  # which teardown removes; FM_RETIRE_STATE_DIR/FM_RETIRE_SUMMARY_DIR pin the
+  # retirement obligation record and the retirement summary into the surviving
+  # parent home so remove_firstmate_home cannot delete the only copies.
   if [ -n "$force" ]; then
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_RETIRE_STATE_DIR="$FM_ROOT/state" FM_RETIRE_SUMMARY_DIR="$FM_ROOT/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
       "$SCRIPT_DIR/fm-teardown.sh" "$id" --force
   else
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_RETIRE_STATE_DIR="$FM_ROOT/state" FM_RETIRE_SUMMARY_DIR="$FM_ROOT/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
       "$SCRIPT_DIR/fm-teardown.sh" "$id"
   fi

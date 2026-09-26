@@ -157,10 +157,15 @@
 # leftovers included) and its delivery confirmation is removed so retired mates
 # cannot leave durable reply expectations behind. Non-forced retirement refuses
 # while any of those records is still unresolved. Teardown then discards child
-# work, kills child runtime endpoints, and removes the retired home. Removing a
-# leased home releases its durable treehouse lease so the pool slot is freed,
-# never left leased forever. If the treehouse return fails, teardown leaves the
-# leased home and state in place instead of hiding a still-held lease.
+# work, kills child runtime endpoints, and removes the retired home.
+# Removing a leased home releases its durable treehouse lease via
+# `treehouse return` and then removes the returned slot directory via
+# `treehouse destroy`: return alone leaves every private file (all gitignored)
+# orphaned and readable in the pool. The removal obligation is recorded at
+# state/<id>.home-retire before the lease is released, so an interrupted or
+# incomplete removal is retried and reported by the next locked session start
+# rather than silently stranded. If the treehouse return fails, teardown leaves
+# the leased home and state in place instead of hiding a still-held lease.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -2624,8 +2629,73 @@ EOF
   printf '%s\n' "$abs_home_path"
 }
 
+# A secondmate home that lives on a treehouse pool slot is retired in two
+# steps: release the durable lease, then remove the returned directory.
+# `treehouse return` releases the lease but never removes the slot's working
+# directory, and every private home directory (data/, state/, config/,
+# projects/, .env, the seed markers) is gitignored, so returning alone leaves
+# the whole home orphaned and readable. Recording the retirement record BEFORE
+# the return means a process killed between lease release and directory removal
+# still leaves the durable obligation at state/<id>.home-retire, which the
+# startup reconciliation in bin/fm-bootstrap.sh retries and reports; a retire
+# that cannot remove the directory and cannot record that obligation is a
+# failure, never a silent success.
+firstmate_home_retire_record_path() {  # <id>
+  local id=$1
+  [ -n "$id" ] || return 1
+  # FM_RETIRE_STATE_DIR lets a caller that redirects STATE/DATA for control
+  # purposes (the remote-retire control route) still place the obligation
+  # record in the parent home's own state dir, where retired_home_reconcile
+  # reads it, instead of inside the home being removed.
+  printf '%s\n' "${FM_RETIRE_STATE_DIR:-$STATE}/$id.home-retire"
+}
+
+firstmate_home_retire_record_write() {  # <record> <id> <home> <phase>
+  local record=$1 id=$2 home=$3 phase=$4 tmp dir
+  dir=${record%/*}
+  [ -n "$dir" ] && [ "$dir" != "$record" ] || return 1
+  # The remote-retire pin can name a code-root state dir that has never been
+  # created; refusing here would leave the leased home in place.
+  mkdir -p -- "$dir" || return 1
+  tmp="$record.tmp.$$"
+  {
+    printf 'id=%s\n' "$id"
+    printf 'home=%s\n' "$home"
+    printf 'phase=%s\n' "$phase"
+    printf 'at=%s\n' "$(date +%s)"
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
+# Remove a treehouse slot directory after its lease was released. `treehouse
+# destroy` re-checks its own guards (unleased, merged, clean, idle), so a slot
+# already re-leased to another task is skipped rather than removed. Returns
+# non-zero without deleting anything when removal could not be proved; the
+# caller keeps the retirement record and reports the obligation instead of
+# claiming a complete retirement.
+firstmate_home_remove_returned_slot() {  # <abs_home_path> <label>
+  local abs_home_path=$1 label=$2 out
+  [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ] || return 0
+  if [ -L "$abs_home_path" ]; then
+    echo "warning: returned $label $abs_home_path is now a symlink; not removing it" >&2
+    return 1
+  fi
+  if out=$( ( cd "$FM_ROOT" && treehouse destroy --yes "$abs_home_path" ) 2>&1 ); then
+    [ -n "$out" ] && printf '%s\n' "$out" >&2
+  else
+    [ -n "$out" ] && printf '%s\n' "$out" >&2
+    echo "warning: treehouse destroy did not remove returned $label $abs_home_path" >&2
+    return 1
+  fi
+  if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
+    echo "warning: $label $abs_home_path still exists after treehouse destroy" >&2
+    return 1
+  fi
+  return 0
+}
+
 remove_firstmate_home() {
-  local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup
+  local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup retire_record return_rc retire_phase
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
@@ -2644,11 +2714,67 @@ remove_firstmate_home() {
       restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
       return 1
     }
-    teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label" || {
-      echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
-      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
-      return 1
-    }
+    retire_record=
+    if [ -n "$expected_id" ]; then
+      retire_record=$(firstmate_home_retire_record_path "$expected_id") || retire_record=
+      if [ -n "$retire_record" ]; then
+        retire_phase=
+        [ -f "$retire_record" ] && retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
+        if [ "$retire_phase" != returned ]; then
+          firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" recorded || {
+            echo "error: cannot record the $label retirement obligation at $retire_record; leaving the leased home in place" >&2
+            restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+            return 1
+          }
+        fi
+      fi
+    fi
+    # Returning the slot only releases the lease; the directory stays behind.
+    # After a successful return the record moves to phase=returned so an
+    # interrupted retry can prove the lease is gone before touching the slot.
+    # A return failure with only phase=recorded keeps the old behavior: restore
+    # and refuse, never probing whether a held lease might secretly be gone.
+    if teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label"; then
+      return_rc=0
+      if [ -n "$retire_record" ]; then
+        firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" returned || true
+      fi
+    else
+      return_rc=$?
+    fi
+    if [ "$return_rc" -ne 0 ]; then
+      retire_phase=
+      if [ -n "$retire_record" ] && [ -f "$retire_record" ]; then
+        retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
+      fi
+      if [ "$retire_phase" = returned ] \
+         && { [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; }; then
+        firstmate_home_remove_returned_slot "$abs_home_path" "$label" || :
+      fi
+      if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
+        echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
+        restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+        return "$return_rc"
+      fi
+      # The directory is gone despite the return error: the lease is released
+      # and the retirement is complete, so clear the obligation.
+      [ -z "$retire_record" ] || rm -f -- "$retire_record"
+      rm -rf -- "$process_event_backup"
+      return 0
+    fi
+    if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
+      if firstmate_home_remove_returned_slot "$abs_home_path" "$label"; then
+        [ -z "$retire_record" ] || rm -f -- "$retire_record"
+      else
+        if [ -n "$retire_record" ]; then
+          echo "warning: $label $abs_home_path could not be removed after its lease was released; the retirement obligation stays recorded at $retire_record and the next session start retries and reports it" >&2
+        else
+          echo "warning: $label $abs_home_path could not be removed after its lease was released; inspect and remove it manually" >&2
+        fi
+      fi
+    else
+      [ -z "$retire_record" ] || rm -f -- "$retire_record"
+    fi
     [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
     return 0
   fi
@@ -2658,6 +2784,113 @@ remove_firstmate_home() {
   fi
   restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
   return 1
+}
+# Before a secondmate home is deleted, retirement archives a bounded summary of
+# its private state into the parent's data/<id>/retirement.md, so nothing the
+# mate knew silently orphans with the home. The capture is deliberately capped
+# per section: it records what the mate held, learned, and reported, not a copy
+# of the home.
+SECONDMATE_RETIRE_SECTION_LINES=${SECONDMATE_RETIRE_SECTION_LINES:-60}
+
+secondmate_retire_capture_file() {  # <title> <path>
+  local title=$1 path=$2 lines
+  printf '### %s\n\n' "$title"
+  if [ -f "$path" ] && [ ! -L "$path" ]; then
+    lines=$(wc -l < "$path" | tr -d ' ')
+    head -n "$SECONDMATE_RETIRE_SECTION_LINES" "$path"
+    if [ "$lines" -gt "$SECONDMATE_RETIRE_SECTION_LINES" ]; then
+      printf '... (%s more lines truncated)\n' "$(( lines - SECONDMATE_RETIRE_SECTION_LINES ))"
+    fi
+  else
+    printf '(none)\n'
+  fi
+  printf '\n'
+}
+
+# One backlog section verbatim (between `## <name>` and the next `##`),
+# blank lines stripped and capped at SECONDMATE_RETIRE_SECTION_LINES.
+secondmate_retire_backlog_section() {  # <name> <backlog>
+  local name=$1 backlog=$2
+  awk -v want="## $name" '
+    $0 == want { in_sec = 1; next }
+    in_sec && $0 ~ /^## / { exit }
+    in_sec { print }
+  ' "$backlog" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -n "$SECONDMATE_RETIRE_SECTION_LINES"
+}
+
+# Backlog items still held for the captain: rows carrying a (hold: marker whose
+# block never records a Resolution.
+secondmate_retire_open_holds() {  # <backlog>
+  local backlog=$1
+  awk '
+    /^- \[.\]/ {
+      if (keep && !resolved) print buf
+      keep = ($0 ~ /\(hold:/) ? 1 : 0
+      resolved = 0
+      buf = $0
+      next
+    }
+    keep && /^## / { if (!resolved) print buf; keep = 0; next }
+    keep { if ($0 ~ /Resolution (recorded|mode)/) resolved = 1; else buf = buf "\n" $0 }
+    END { if (keep && !resolved) print buf }
+  ' "$backlog" 2>/dev/null | head -n "$SECONDMATE_RETIRE_SECTION_LINES"
+}
+
+secondmate_retire_report_links() {  # <home>
+  local home=$1 f rel
+  for f in "$home"/data/*/report.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    rel=${f##*/data/}
+    printf -- '- %s\n' "data/$rel"
+  done 2>/dev/null | sort | head -n 40
+}
+
+write_secondmate_retirement_summary() {  # <home> <id>
+  local home=$1 id=$2 out_dir out tmp backlog
+  [ -d "$home" ] && [ ! -L "$home" ] || return 0
+  # FM_RETIRE_SUMMARY_DIR pins where the archive lands when DATA was
+  # redirected for control purposes (the remote-retire route overrides DATA
+  # into the home being removed); it must point at a dir in the surviving
+  # parent home so the summary is not deleted with the mate.
+  out_dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$id"
+  out="$out_dir/retirement.md"
+  mkdir -p -- "$out_dir" || return 1
+  tmp="$out.tmp.$$"
+  backlog="$home/data/backlog.md"
+  {
+    printf '# Retirement summary: %s\n\n' "$id"
+    printf 'Secondmate %s retired %s. Its home was %s.\n' "$id" "$(date '+%Y-%m-%d %H:%M:%S %z')" "$home"
+    printf 'This bounded summary preserves the private state the home held before removal: queued work, open holds, learnings, residual uncertainties, and report/PR links.\n\n'
+    printf '## Queued and in-flight work\n\n'
+    if [ -f "$backlog" ] && [ ! -L "$backlog" ]; then
+      secondmate_retire_backlog_section "In flight" "$backlog"
+      secondmate_retire_backlog_section "Queued" "$backlog"
+    else
+      printf '(no backlog file)\n'
+    fi
+    printf '\n## Open captain holds\n\n'
+    if [ -f "$backlog" ] && [ ! -L "$backlog" ]; then
+      secondmate_retire_open_holds "$backlog" || true
+    else
+      printf '(none)\n'
+    fi
+    printf '\n'
+    secondmate_retire_capture_file "Learnings (data/learnings.md)" "$home/data/learnings.md"
+    secondmate_retire_capture_file "Residual uncertainties (data/intake-residuals.md)" "$home/data/intake-residuals.md"
+    secondmate_retire_capture_file "Charter (data/charter.md)" "$home/data/charter.md"
+    printf '### Report artifacts\n\n'
+    secondmate_retire_report_links "$home"
+    printf '\n### PR links\n\n'
+    grep -rhoE 'https://github\.com/[^[:space:])]*/pull/[0-9]+' \
+      "$backlog" "$home"/data/*/report.md "$home"/data/*/brief.md 2>/dev/null \
+      | sort -u | head -n 40 || true
+    printf '\n'
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  if ! mv -f -- "$tmp" "$out"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  printf 'teardown: recorded retirement summary for %s at %s\n' "$id" "$out" >&2
 }
 
 firstmate_home_has_process_events() {
@@ -3679,6 +3912,14 @@ if [ "$KIND" != secondmate ]; then
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
+  # Archive a bounded parent-visible summary of the mate's private state before
+  # any removal: queued work, open holds, learnings, residual uncertainties, and
+  # report/PR links. A local home that cannot be summarized is preserved rather
+  # than silently orphaned with its state.
+  if [ -d "$HOME_PATH" ] && [ ! -L "$HOME_PATH" ]; then
+    write_secondmate_retirement_summary "$HOME_PATH" "$ID" \
+      || { echo "error: could not record the retirement summary for $ID; preserving the secondmate home and route" >&2; exit 1; }
+  fi
   handoff_wake_retire_stage \
     || { echo "error: receiver wake cleanup could not be staged; preserving the secondmate home and route" >&2; exit 1; }
   pending_replies_recovery_validate recheck \
