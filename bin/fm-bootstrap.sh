@@ -1322,6 +1322,11 @@ retired_home_reconcile() {
       rc=2
       continue
     fi
+    if [ "$phase" = remote ]; then
+      echo "HOME_RETIRE: $id: remote home $home was not proved removed; the obligation stays recorded and is not a local pool slot"
+      rc=2
+      continue
+    fi
     if [ ! -e "$home" ] && [ ! -L "$home" ]; then
       rm -f -- "$record"
       continue

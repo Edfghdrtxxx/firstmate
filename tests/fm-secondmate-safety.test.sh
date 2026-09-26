@@ -1832,7 +1832,7 @@ EOF
 }
 
 test_secondmate_teardown_preserves_foreign_obligation_record() {
-  local home subhome subhome_abs stranded stranded_abs fakebin log lease fmroot record err
+  local home subhome subhome_abs stranded stranded_abs fakebin log lease fmroot record err rc
   home="$TMP_ROOT/teardown-foreign-home"
   subhome="$TMP_ROOT/teardown-foreign-subhome"
   stranded="$TMP_ROOT/teardown-foreign-stranded"
@@ -1863,17 +1863,21 @@ EOF
   lease="$TMP_ROOT/teardown-foreign-fake/lease"
   printf 'domain\n' > "$lease"
 
+  rc=0
   PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
     FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-foreign-fake/pane.txt" \
     FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
-    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err" \
-    || fail "teardown failed when an obligation already named a different surviving home"
-  [ ! -d "$subhome" ] || fail "teardown did not remove the current secondmate home"
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "teardown released a home it could not record an obligation for"
+  [ -d "$subhome" ] || fail "teardown removed a home it could not record an obligation for"
+  [ -f "$lease" ] || fail "teardown released the lease without an obligation for this home"
   [ -f "$record" ] || fail "teardown erased an obligation naming a different surviving home"
   grep -F "home=$stranded_abs" "$record" >/dev/null \
     || fail "teardown rewrote the obligation away from the surviving home"
   grep -F "leaving it untouched" "$err" >/dev/null \
     || fail "teardown did not warn about the preserved foreign obligation"
+  grep -F "cannot record a retirement obligation" "$err" >/dev/null \
+    || fail "teardown did not refuse the home it could not record"
   [ -d "$stranded" ] || fail "teardown touched the home named by the foreign obligation"
   pass "secondmate teardown preserves a same-id obligation that names a different surviving home"
 }

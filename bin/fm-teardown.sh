@@ -986,6 +986,21 @@ remote_outbox_cleanup() {
   )
 }
 
+remote_retire_parent_obligation() {  # <host> <remote_home>
+  local host=$1 remote_home=$2 record tmp
+  record="$STATE/$ID.home-retire"
+  mkdir -p -- "$STATE" || return 1
+  tmp="$record.tmp.$$"
+  {
+    printf 'id=%s\n' "$ID"
+    printf 'home=%s\n' "$remote_home"
+    printf 'phase=remote\n'
+    printf 'host=%s\n' "$host"
+    printf 'at=%s\n' "$(date +%s)"
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
 remote_secondmate_teardown() {
   local remote_host remote_root remote_home kind route_host route_root route_home out rc tmp
   remote_host=$(fm_meta_get "$META" remote_host)
@@ -1023,6 +1038,7 @@ remote_secondmate_teardown() {
   fi
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
+    remote_retire_parent_obligation "$remote_host" "$remote_home" || true
     if [ "$rc" -eq 255 ]; then
       echo "error: remote retirement completion is unknown; preserving the route and local records for same-host reconciliation" >&2
     elif ! "$SCRIPT_DIR/fm-procevent-remote-reply.sh" arm-locked "$ID" >/dev/null 2>&1; then
@@ -2743,7 +2759,9 @@ remove_firstmate_home() {
       if [ -n "$retire_record" ]; then
         if firstmate_home_retire_record_foreign "$retire_record" "$abs_home_path"; then
           echo "warning: retirement obligation $retire_record still names $(sed -n 's/^home=//p' "$retire_record" | head -1); leaving it untouched" >&2
-          retire_record=
+          echo "error: cannot record a retirement obligation for $label $abs_home_path; leaving the leased home in place" >&2
+          restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+          return 1
         else
           retire_phase=
           [ -f "$retire_record" ] && retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
@@ -2789,11 +2807,16 @@ remove_firstmate_home() {
         restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
         return "$return_rc"
       fi
-      # The directory is gone despite the return error: the lease is released
-      # and the retirement is complete, so clear the obligation.
-      firstmate_home_retire_record_clear "$retire_record" "$abs_home_path"
-      rm -rf -- "$process_event_backup"
-      return 0
+      # A vanished directory is not proof the lease was released. Only a
+      # record that already says returned may be cleared after a failed return.
+      if [ "$retire_phase" = returned ]; then
+        firstmate_home_retire_record_clear "$retire_record" "$abs_home_path"
+        rm -rf -- "$process_event_backup"
+        return 0
+      fi
+      echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
+      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+      return "$return_rc"
     fi
     if [ -e "$abs_home_path" ] || [ -L "$abs_home_path" ]; then
       if firstmate_home_remove_returned_slot "$abs_home_path" "$label"; then
@@ -2874,12 +2897,39 @@ secondmate_retire_open_holds() {  # <backlog>
 # reports/<child>.md and the emitted path names that archive.
 SECONDMATE_RETIRE_REPORT_LINES=${SECONDMATE_RETIRE_REPORT_LINES:-400}
 
+secondmate_retire_nested_note() {  # <child_home> <child_id>
+  local home=$1 id=$2 notes queued learnings
+  notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
+  [ -n "$notes" ] || return 0
+  queued=0
+  if [ -f "$home/data/backlog.md" ] && [ ! -L "$home/data/backlog.md" ]; then
+    queued=$(grep -c '^- \[ \]' "$home/data/backlog.md" 2>/dev/null || true)
+  fi
+  learnings=no
+  if [ -f "$home/data/learnings.md" ] && [ ! -L "$home/data/learnings.md" ]; then
+    learnings=yes
+  fi
+  printf '%s home=%s queued=%s learnings=%s\n' "$id" "$home" "$queued" "$learnings" >> "$notes"
+}
+
+secondmate_retire_report_tree_is_plain() {  # <home> <child>
+  local home=$1 child=$2
+  [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 1
+  [ -d "$home/data/$child" ] && [ ! -L "$home/data/$child" ] || return 1
+  [ -f "$home/data/$child/report.md" ] && [ ! -L "$home/data/$child/report.md" ]
+}
+
 secondmate_retire_report_links() {  # <home> <out_dir>
-  local home=$1 out_dir=$2 f rel child dst lines
+  local home=$1 out_dir=$2 f rel child dst lines failed=0 lines_out
+  lines_out=$(mktemp) || return 1
   for f in "$home"/data/*/report.md; do
-    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    [ -e "$f" ] || [ -L "$f" ] || continue
     rel=${f##*/data/}
     child=${rel%/report.md}
+    if ! secondmate_retire_report_tree_is_plain "$home" "$child"; then
+      failed=1
+      continue
+    fi
     dst="$out_dir/reports/$child.md"
     if mkdir -p -- "$out_dir/reports" 2>/dev/null \
        && head -n "$SECONDMATE_RETIRE_REPORT_LINES" "$f" > "$dst.tmp.$$" 2>/dev/null; then
@@ -2888,20 +2938,23 @@ secondmate_retire_report_links() {  # <home> <out_dir>
         printf '... (%s more lines truncated)\n' "$(( lines - SECONDMATE_RETIRE_REPORT_LINES ))" >> "$dst.tmp.$$"
       fi
       if mv -f -- "$dst.tmp.$$" "$dst"; then
-        printf -- '- reports/%s.md (archived from data/%s)\n' "$child" "$rel"
+        printf -- '- reports/%s.md (archived from data/%s)\n' "$child" "$rel" >> "$lines_out"
       else
         rm -f -- "$dst.tmp.$$"
-        printf -- '- data/%s (archive failed)\n' "$rel"
+        failed=1
       fi
     else
       rm -f -- "$dst.tmp.$$"
-      printf -- '- data/%s (archive failed)\n' "$rel"
+      failed=1
     fi
-  done 2>/dev/null | sort | head -n 40
+  done
+  sort "$lines_out" | head -n 40
+  rm -f -- "$lines_out"
+  [ "$failed" -eq 0 ]
 }
 
 write_secondmate_retirement_summary() {  # <home> <id>
-  local home=$1 id=$2 out_dir out tmp backlog
+  local home=$1 id=$2 out_dir out tmp backlog report_links
   [ -d "$home" ] && [ ! -L "$home" ] || return 0
   # FM_RETIRE_SUMMARY_DIR pins where the archive lands when DATA was
   # redirected for control purposes (the remote-retire route overrides DATA
@@ -2910,6 +2963,9 @@ write_secondmate_retirement_summary() {  # <home> <id>
   out_dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$id"
   out="$out_dir/retirement.md"
   mkdir -p -- "$out_dir" || return 1
+  if ! report_links=$(secondmate_retire_report_links "$home" "$out_dir"); then
+    return 1
+  fi
   tmp="$out.tmp.$$"
   backlog="$home/data/backlog.md"
   {
@@ -2933,8 +2989,13 @@ write_secondmate_retirement_summary() {  # <home> <id>
     secondmate_retire_capture_file "Learnings (data/learnings.md)" "$home/data/learnings.md"
     secondmate_retire_capture_file "Residual uncertainties (data/intake-residuals.md)" "$home/data/intake-residuals.md"
     secondmate_retire_capture_file "Charter (data/charter.md)" "$home/data/charter.md"
+    if [ -n "${SECONDMATE_NESTED_RETIRE_NOTES:-}" ] && [ -s "$SECONDMATE_NESTED_RETIRE_NOTES" ]; then
+      printf '### Nested homes removed\n\n'
+      cat "$SECONDMATE_NESTED_RETIRE_NOTES"
+      printf '\n'
+    fi
     printf '### Report artifacts\n\n'
-    secondmate_retire_report_links "$home" "$out_dir"
+    printf '%s\n' "$report_links"
     printf '\n### PR links\n\n'
     grep -rhoE 'https://github\.com/[^[:space:])]*/pull/[0-9]+' \
       "$backlog" "$home"/data/*/report.md "$home"/data/*/brief.md 2>/dev/null \
@@ -3513,6 +3574,7 @@ cleanup_firstmate_home_children() {
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
         cleanup_firstmate_home_children "$child_home" || return $?
+        secondmate_retire_nested_note "$child_home" "$child_id"
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return $?
       fi
     elif [ "$child_backend" = orca ]; then
@@ -3638,6 +3700,7 @@ if [ "$KIND" = secondmate ]; then
 fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
+  SECONDMATE_NESTED_RETIRE_NOTES=$(mktemp) || exit 1
   cleanup_firstmate_home_children "$HOME_PATH" || exit $?
 fi
 

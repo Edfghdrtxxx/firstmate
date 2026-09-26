@@ -410,7 +410,7 @@ cmd_update() {
 }
 
 cmd_retire() {
-  local id=$1 force=${2:-} rc
+  local id=$1 force=${2:-} rc=0
   validate_id "$id"
   validate_home "$id" yes || rc=$?
   if [ "${rc:-0}" -eq 2 ]; then
@@ -421,23 +421,27 @@ cmd_retire() {
   remote_endpoint_require "$id"
   FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" "$SCRIPT_DIR/fm-guard.sh" || true
-  # STATE/DATA are redirected to the control plane inside the mate's home,
-  # which teardown removes; FM_RETIRE_STATE_DIR/FM_RETIRE_SUMMARY_DIR pin the
-  # retirement obligation record and the retirement summary into the surviving
-  # parent home so remove_firstmate_home cannot delete the only copies.
+  # STATE/DATA are redirected into the home being removed. Do not pin the
+  # obligation onto the code root: nothing sweeps that directory. If the home
+  # is still there after teardown, fail so the calling parent records the
+  # obligation in the home that actually runs reconciliation.
+  rc=0
   if [ -n "$force" ]; then
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
-      FM_RETIRE_STATE_DIR="$FM_ROOT/state" FM_RETIRE_SUMMARY_DIR="$FM_ROOT/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
-      "$SCRIPT_DIR/fm-teardown.sh" "$id" --force
+      "$SCRIPT_DIR/fm-teardown.sh" "$id" --force || rc=$?
   else
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
-      FM_RETIRE_STATE_DIR="$FM_ROOT/state" FM_RETIRE_SUMMARY_DIR="$FM_ROOT/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
-      "$SCRIPT_DIR/fm-teardown.sh" "$id"
+      "$SCRIPT_DIR/fm-teardown.sh" "$id" || rc=$?
   fi
+  if [ -e "$TARGET_HOME" ] || [ -L "$TARGET_HOME" ]; then
+    echo "error: remote home $TARGET_HOME remains after retirement" >&2
+    return 1
+  fi
+  return "${rc:-0}"
 }
 
 case "${1:-}" in
