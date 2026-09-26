@@ -686,6 +686,8 @@ A preexisting project-bearing charter is also refused until it is re-scaffolded 
 
 The lease is held under the secondmate id until explicit retirement or seed rollback returns it, so normal restarts do not free or recycle the home.
 Retirement archives a bounded summary of the mate's private state at `data/<id>/retirement.md` in the parent home, then releases the lease with `treehouse return` and removes the returned slot directory with `treehouse destroy`; the pending removal is recorded at `state/<id>.home-retire` so an interrupted or refused removal is retried and reported by the next session start rather than silently orphaned.
+Seed rollback that releases a leased home it cannot remove records the same obligation.
+The remote-retire control route keeps its control state and data inside the home being removed, so it pins the summary and the obligation onto the surviving code root's `data/` and `state/` instead of those redirected directories.
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 
 ### Project modes and backlog handoff

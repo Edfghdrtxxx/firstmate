@@ -2643,11 +2643,20 @@ EOF
 firstmate_home_retire_record_path() {  # <id>
   local id=$1
   [ -n "$id" ] || return 1
-  printf '%s\n' "$STATE/$id.home-retire"
+  # FM_RETIRE_STATE_DIR lets a caller that redirects STATE/DATA for control
+  # purposes (the remote-retire control route) still place the obligation
+  # record in the parent home's own state dir, where retired_home_reconcile
+  # reads it, instead of inside the home being removed.
+  printf '%s\n' "${FM_RETIRE_STATE_DIR:-$STATE}/$id.home-retire"
 }
 
 firstmate_home_retire_record_write() {  # <record> <id> <home> <phase>
-  local record=$1 id=$2 home=$3 phase=$4 tmp
+  local record=$1 id=$2 home=$3 phase=$4 tmp dir
+  dir=${record%/*}
+  [ -n "$dir" ] && [ "$dir" != "$record" ] || return 1
+  # The remote-retire pin can name a code-root state dir that has never been
+  # created; refusing here would leave the leased home in place.
+  mkdir -p -- "$dir" || return 1
   tmp="$record.tmp.$$"
   {
     printf 'id=%s\n' "$id"
@@ -2839,7 +2848,11 @@ secondmate_retire_report_links() {  # <home>
 write_secondmate_retirement_summary() {  # <home> <id>
   local home=$1 id=$2 out_dir out tmp backlog
   [ -d "$home" ] && [ ! -L "$home" ] || return 0
-  out_dir="$DATA/$id"
+  # FM_RETIRE_SUMMARY_DIR pins where the archive lands when DATA was
+  # redirected for control purposes (the remote-retire route overrides DATA
+  # into the home being removed); it must point at a dir in the surviving
+  # parent home so the summary is not deleted with the mate.
+  out_dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$id"
   out="$out_dir/retirement.md"
   mkdir -p -- "$out_dir" || return 1
   tmp="$out.tmp.$$"

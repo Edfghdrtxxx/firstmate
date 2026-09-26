@@ -368,10 +368,50 @@ test_home_seed_warns_when_acquired_home_return_fails() {
   grep -F 'already marked for other' "$err" >/dev/null || fail "seed did not report original acquired-home rejection"
   grep -F "warning: failed to return treehouse-acquired home $acquired_abs during seed rollback" "$err" >/dev/null \
     || fail "seed rollback did not warn when treehouse return failed"
+  [ ! -e "$home/state/other.home-retire" ] || fail "failed rollback return left a removal obligation while the lease is still held"
   [ -f "$lease" ] || fail "failed rollback return did not preserve lease evidence"
   grep -F "treehouse return --force $acquired_abs" "$log" >/dev/null \
     || fail "failed rollback did not attempt to return the acquired home"
   pass "home seed rollback warns when treehouse-acquired return fails"
+}
+
+test_home_seed_records_obligation_when_acquired_home_resists_removal() {
+  local home acquired acquired_abs fakebin log err record lease
+  home="$TMP_ROOT/dash-destroy-fail-home"
+  acquired="$TMP_ROOT/dash-destroy-fail-acquired-home"
+  err="$TMP_ROOT/dash-destroy-fail.err"
+  mkdir -p "$home/projects" "$home/data" "$home/state"
+  fm_git_init_commit "$home/projects/alpha"
+  fm_git_add_origin "$home/projects/alpha" "$TMP_ROOT/remotes/dash-destroy-fail-alpha.git"
+  printf '%s\n' '- alpha [direct-PR] - alpha project (added 2026-06-22)' > "$home/data/projects.md"
+  git clone --quiet "$ROOT" "$acquired"
+  acquired_abs=$(cd "$acquired" && pwd -P)
+  printf 'other\n' > "$acquired/.fm-secondmate-home"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/dash-destroy-fail-fake")
+  log="$TMP_ROOT/dash-destroy-fail-fake/tmux.log"
+  lease="$TMP_ROOT/dash-destroy-fail-fake/lease"
+  printf 'dash\n' > "$lease"
+
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TREEHOUSE_HOME="$acquired" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_DESTROY_FAIL=1 \
+    FM_SECONDMATE_CHARTER='dash acquired scope' FM_SECONDMATE_SCOPE='dash acquired scope' \
+    "$ROOT/bin/fm-home-seed.sh" dash - alpha >/dev/null 2>"$err"; then
+    fail "seed reused an acquired home when destroy was set to fail"
+  fi
+  grep -F 'already marked for other' "$err" >/dev/null || fail "seed did not report original acquired-home rejection"
+  grep -F "treehouse return --force $acquired_abs" "$log" >/dev/null \
+    || fail "destroy-fail rollback did not return the acquired home"
+  grep -F "treehouse destroy --yes $acquired_abs" "$log" >/dev/null \
+    || fail "destroy-fail rollback did not attempt to remove the acquired home"
+  [ -d "$acquired" ] || fail "destroy-fail rollback removed the acquired home"
+  [ ! -e "$lease" ] || fail "destroy-fail rollback left the lease held"
+  record="$home/state/other.home-retire"
+  [ -f "$record" ] || fail "destroy-fail rollback did not record a removal obligation in the parent home"
+  grep -F 'id=other' "$record" >/dev/null || fail "seed rollback obligation does not name the marked mate"
+  grep -F "home=$acquired_abs" "$record" >/dev/null || fail "seed rollback obligation does not name the surviving home"
+  grep -F 'phase=returned' "$record" >/dev/null || fail "seed rollback obligation does not record a released lease"
+  [ ! -e "$acquired/state/other.home-retire" ] || fail "seed rollback wrote the obligation inside the home it could not remove"
+  pass "home seed rollback records a durable obligation when the returned home resists removal"
 }
 
 test_home_seed_does_not_return_unsafe_acquired_home() {
@@ -1711,6 +1751,62 @@ EOF
     || fail "retirement obligation does not name the retired mate"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null && fail "teardown kept the registry route"
   pass "secondmate teardown records a durable obligation when the returned home resists removal"
+}
+
+test_secondmate_teardown_pins_retirement_records_outside_redirected_home() {
+  local home subhome subhome_abs fakebin log lease fmroot control_state control_data summary record
+  home="$TMP_ROOT/teardown-pin-home"
+  subhome="$TMP_ROOT/teardown-pin-subhome"
+  fmroot="$TMP_ROOT/teardown-pin-fmroot"
+  control_state="$subhome/state/parent-route"
+  control_data="$subhome/data/.parent-route"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$control_state" "$control_data" "$subhome/data"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  cat > "$subhome/data/backlog.md" <<'EOF'
+# Backlog
+
+## Queued
+- [ ] task-queued - waiting work (repo: alpha)
+EOF
+  subhome_abs=$(cd "$subhome" && pwd -P)
+  cat > "$control_state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$control_data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/teardown-pin-fake")
+  log="$TMP_ROOT/teardown-pin-fake/tmux.log"
+  lease="$TMP_ROOT/teardown-pin-fake/lease"
+  printf 'domain\n' > "$lease"
+
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-pin-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" FM_FAKE_TREEHOUSE_DESTROY_FAIL=1 \
+    FM_STATE_OVERRIDE="$control_state" FM_DATA_OVERRIDE="$control_data" \
+    FM_RETIRE_STATE_DIR="$home/retire-state" FM_RETIRE_SUMMARY_DIR="$home/retire-data" \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "teardown failed when retirement records were pinned outside a redirected home"
+  [ -d "$subhome" ] || fail "pinned teardown removed the home despite a failed destroy"
+  record="$home/retire-state/domain.home-retire"
+  summary="$home/retire-data/domain/retirement.md"
+  [ -f "$record" ] || fail "pinned teardown did not write the obligation outside the redirected state dir"
+  grep -F "home=$subhome_abs" "$record" >/dev/null || fail "pinned obligation does not name the surviving home"
+  grep -F 'phase=returned' "$record" >/dev/null || fail "pinned obligation does not record a released lease"
+  [ -f "$summary" ] || fail "pinned teardown did not write the retirement summary outside the redirected data dir"
+  grep -F 'task-queued' "$summary" >/dev/null || fail "pinned retirement summary dropped the backlog"
+  [ ! -e "$control_state/domain.home-retire" ] || fail "pinned teardown left the obligation inside the redirected state dir"
+  [ ! -e "$control_data/domain/retirement.md" ] || fail "pinned teardown left the summary inside the redirected data dir"
+  [ ! -e "$subhome/state/domain.home-retire" ] || fail "pinned teardown left the obligation in the mate state dir"
+  pass "secondmate teardown pins the retirement summary and obligation outside a redirected home"
 }
 
 test_secondmate_teardown_refuses_ambiguous_and_mismatched_registry_bindings() {
@@ -3125,6 +3221,7 @@ test_home_seed_validate_rejects_nested_homes
 test_home_seed_uses_treehouse_acquired_home
 test_home_seed_returns_treehouse_acquired_home_on_assignment_failure
 test_home_seed_warns_when_acquired_home_return_fails
+test_home_seed_records_obligation_when_acquired_home_resists_removal
 test_home_seed_does_not_return_unsafe_acquired_home
 test_home_seed_rolls_back_failed_clone
 test_home_seed_refuses_missing_filled_charter
@@ -3163,6 +3260,7 @@ test_fm_send_refuses_bare_window_without_home_meta
 test_secondmate_teardown_retires_empty_home
 test_secondmate_teardown_removes_returned_home_and_archives_summary
 test_secondmate_teardown_records_obligation_when_returned_home_resists_removal
+test_secondmate_teardown_pins_retirement_records_outside_redirected_home
 test_secondmate_teardown_refuses_ambiguous_and_mismatched_registry_bindings
 test_secondmate_teardown_sweeps_process_events_before_removal
 test_secondmate_teardown_refuses_process_events_without_sweep_script

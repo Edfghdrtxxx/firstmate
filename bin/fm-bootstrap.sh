@@ -1290,8 +1290,10 @@ backlog_record_reconcile() {
 }
 # Retired-home reconciliation: bin/fm-teardown.sh records
 # state/<id>.home-retire before releasing a secondmate home's treehouse lease,
-# and clears it once the returned directory is gone. A surviving record means a
-# retire was interrupted between lease release and directory removal, or the
+# and bin/fm-home-seed.sh records the same obligation when seed rollback
+# releases a leased home it cannot remove. The writer clears the record once
+# the returned directory is gone. A surviving record means a retire or
+# rollback was interrupted between lease release and directory removal, or the
 # removal itself failed; both leave the private home on disk while every
 # registry and task record is already gone. Retry the removal here - destroy's
 # own guards refuse a slot a new lease already holds - and report whatever
