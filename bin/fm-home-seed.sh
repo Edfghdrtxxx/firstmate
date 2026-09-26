@@ -470,7 +470,7 @@ registered_posture_line() {  # <project>
 }
 
 clone_project() {
-  local project=$1 home=$2 src dst url dst_url mode mode_line
+  local project=$1 home=$2 src dst url dst_url mode mode_line seed_default seed_branch
   src="$PROJECTS/$project"
   dst=$(validate_project_destination "$home" "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
@@ -504,11 +504,27 @@ EOF
   # rejected; docs/secondmate-project-storage.md owns that finding. A failed
   # local clone falls back to cloning the origin URL directly.
   if git clone --quiet --local "$src" "$dst" 2>/dev/null; then
-    git -C "$dst" remote set-url origin "$url" || {
+    seed_default=
+    if git -C "$dst" remote set-url origin "$url" \
+       && git -C "$dst" fetch --quiet --prune origin 2>/dev/null \
+       && git -C "$dst" remote set-head origin --auto >/dev/null 2>&1; then
+      seed_default=$(git -C "$dst" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+      seed_default=${seed_default#origin/}
+    fi
+    if [ -z "$seed_default" ] \
+       || ! git -C "$dst" checkout --quiet -B "$seed_default" "origin/$seed_default" 2>/dev/null; then
       rm -rf -- "$dst"
-      echo "error: could not repoint seeded project $project origin to $url" >&2
-      return 1
-    }
+      echo "warning: local clone of $project from $src could not be reconciled to origin's default branch; cloning from origin instead" >&2
+      git clone --quiet "$url" "$dst" || return 1
+    else
+      while IFS= read -r seed_branch; do
+        [ -n "$seed_branch" ] || continue
+        [ "$seed_branch" = "$seed_default" ] && continue
+        git -C "$dst" branch -D -- "$seed_branch" >/dev/null 2>&1 || true
+      done <<EOF
+$(git -C "$dst" for-each-ref --format='%(refname:short)' refs/heads)
+EOF
+    fi
   else
     rm -rf -- "$dst"
     echo "warning: local clone of $project from $src failed; cloning from origin instead" >&2
@@ -619,6 +635,10 @@ seed_return_treehouse_home() {
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; lease may still be held" >&2
     return 0
   }
+  ( cd "$FM_ROOT" && treehouse destroy --yes "$abs_home" >/dev/null 2>&1 ) || true
+  if [ -e "$abs_home" ] || [ -L "$abs_home" ]; then
+    echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback" >&2
+  fi
 }
 
 seed_remove_created_home() {

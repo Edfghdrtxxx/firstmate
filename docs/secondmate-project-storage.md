@@ -25,6 +25,7 @@ Their only gain over `--local` is deduplicating future fetches, which is exactly
 ## Invariants the choice preserves
 
 - A seeded project is always a standalone clone with its own `.git` directory, refs, and config; `seeded_origin_url` keeps proving the seeded `origin` matches the parent's recorded URL.
+- The seeded checkout lands on origin's default branch, matching a clone straight from the URL: after repointing `origin`, a `fetch --prune` reconciles remote-tracking refs and prunes the local-only branches `--local` copied, and the seed checks out that default; the parent's currently checked-out or unpushed topic branch never becomes the mate's baseline.
 - Project checkouts stay inside `projects/`, which is gitignored and never swept by the tracked-file fast-forward channel (`bin/fm-ff-lib.sh` syncs only the home checkout).
 - `fm-fleet-sync.sh` runs per home over that home's `projects/`; under `--local` each home's fetches prune and update only its own remote-tracking refs.
 - Remote secondmate provisioning is unaffected: it operates on another host where the parent's clone does not exist, and its checks assume a plain `.git` directory - `--local` produces exactly that.

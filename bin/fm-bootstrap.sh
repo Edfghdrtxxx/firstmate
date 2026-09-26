@@ -1298,7 +1298,7 @@ backlog_record_reconcile() {
 # still cannot be reconciled, then drop records that provably need no more
 # action (directory absent or no longer marked for that mate).
 retired_home_reconcile() {
-  local record id home marker_id out rc=0
+  local record id home marker_id out phase rc=0
   for record in "$STATE"/*.home-retire; do
     [ -e "$record" ] || [ -L "$record" ] || continue
     if ! fm_backlog_record_present "$record" "home retirement record" "$STATE"; then
@@ -1306,11 +1306,12 @@ retired_home_reconcile() {
       rc=2
       continue
     fi
-    id=; home=; marker_id=
+    id=; home=; marker_id=; phase=
     while IFS='=' read -r k v; do
       case "$k" in
         id) id=$v ;;
         home) home=$v ;;
+        phase) phase=$v ;;
       esac
     done < "$record"
     if [ -z "$id" ] || [ -z "$home" ]; then
@@ -1326,9 +1327,9 @@ retired_home_reconcile() {
     # a re-leased slot already belongs to the next tenant.
     if [ -f "$home/.fm-secondmate-home" ]; then
       marker_id=$(cat "$home/.fm-secondmate-home" 2>/dev/null || true)
-      if [ "$marker_id" != "$id" ]; then
+      if [ -n "$marker_id" ] && [ "$marker_id" != "$id" ]; then
         rm -f -- "$record"
-        echo "BOOTSTRAP_INFO: $home was re-marked for ${marker_id:-unknown}; the retirement obligation for $id is resolved"
+        echo "BOOTSTRAP_INFO: $home was re-marked for $marker_id; the retirement obligation for $id is resolved"
         continue
       fi
     fi
@@ -1336,6 +1337,9 @@ retired_home_reconcile() {
       echo "HOME_RETIRE: $id: treehouse is unavailable; $home may remain after retirement"
       rc=2
       continue
+    fi
+    if [ "$phase" != returned ] && [ "$marker_id" = "$id" ]; then
+      ( cd "$FM_ROOT" && treehouse return --force "$home" ) >/dev/null 2>&1 || true
     fi
     if out=$( ( cd "$FM_ROOT" && treehouse destroy --yes "$home" ) 2>&1 ); then
       [ -n "$out" ] && printf '%s\n' "$out" >&2

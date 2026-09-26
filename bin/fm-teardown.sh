@@ -2686,7 +2686,7 @@ firstmate_home_remove_returned_slot() {  # <abs_home_path> <label>
 }
 
 remove_firstmate_home() {
-  local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup retire_record return_rc
+  local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup retire_record return_rc retire_phase
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
@@ -2709,11 +2709,15 @@ remove_firstmate_home() {
     if [ -n "$expected_id" ]; then
       retire_record=$(firstmate_home_retire_record_path "$expected_id") || retire_record=
       if [ -n "$retire_record" ]; then
-        firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" recorded || {
-          echo "error: cannot record the $label retirement obligation at $retire_record; leaving the leased home in place" >&2
-          restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
-          return 1
-        }
+        retire_phase=
+        [ -f "$retire_record" ] && retire_phase=$(sed -n 's/^phase=//p' "$retire_record" | head -1)
+        if [ "$retire_phase" != returned ]; then
+          firstmate_home_retire_record_write "$retire_record" "$expected_id" "$abs_home_path" recorded || {
+            echo "error: cannot record the $label retirement obligation at $retire_record; leaving the leased home in place" >&2
+            restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
+            return 1
+          }
+        fi
       fi
     fi
     # Returning the slot only releases the lease; the directory stays behind.
