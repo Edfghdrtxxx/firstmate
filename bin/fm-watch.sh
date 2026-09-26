@@ -2838,9 +2838,10 @@ EOF
     # path. Publication failure stays side-band.
     home_summary_refresh_detached
     files=""
+    signal_paths=()
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
-      case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
+      case " $files " in *" $f "*) ;; *) files="$files $f"; signal_paths+=("$f") ;; esac
     done <<EOF
 $pending
 EOF
@@ -2870,8 +2871,7 @@ EOF
     # status span, and the capture only once the authoritative verdict comes up short.
     FM_SIGNAL_SURFACE_ENDPOINTS=''
     FM_SIGNAL_NEEDS_DECISION_FILES=''
-    # shellcheck disable=SC2086  # $files is a space-separated status-path list (ids carry no spaces)
-    signal_files_actionable $files
+    signal_files_actionable "${signal_paths[@]+"${signal_paths[@]}"}"
     signal_actionable=$?
     # A decision-owned file's queued row payload is marked "needs-decision:"
     # instead of the ordinary "signal:" below (other files in the same batch
@@ -2883,9 +2883,9 @@ EOF
     # fm-primary-pi-watch.ts), and the away daemon, whose handle_durable_wakes
     # passes it to handle_wake (see the comment above handle_wake in
     # bin/fm-supervise-daemon.sh).
-    # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { ! signal_crew_provably_working "${signal_paths[@]+"${signal_paths[@]}"}" \
+        && ! signal_turnend_panes_churned "${signal_paths[@]+"${signal_paths[@]}"}"; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         file_reason="$reason"

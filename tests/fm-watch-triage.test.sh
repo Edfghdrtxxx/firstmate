@@ -2060,6 +2060,164 @@ test_routine_signal_payload_not_marked_needs_decision() {
   pass "a routine event containing a needs-decision phrase keeps its ordinary payload, unmarked"
 }
 
+# --- a home path containing a space must not break signal triage -------------
+# The watcher collects its changed signal files into a list and hands that list
+# to the triage predicates. When that list is joined and expanded on spaces, a
+# home like "/Users/Reid Hu/firstmate" splits every signal path into a dead
+# absolute fragment and a relative fragment, so triage reads no real file at
+# all. In an affected home a captain-relevant line is then absorbed whenever
+# the crew happens to be provably working, a benign absorb never commits the
+# classified position (the same change re-fires every poll), this home's own
+# self-announced appends can never be recognized as owned, a surfaced line is
+# re-delivered by the heartbeat backstop, and config/turnend-churn-absorb is a
+# silent no-op. This case runs the whole triage path under a state root whose
+# path contains a space and exercises each of those behaviors.
+
+test_space_path_signal_triage() {
+  local dir state fakebin out drain_out status_file window key pid rc i successor
+  dir=$(make_case "spaced home/signal-triage"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  status_file="$state/task.status"
+
+  # 1. A captain-relevant status surfaces while the crew is provably working.
+  #    Split fragments classify nothing and still read the crew as working, so
+  #    under the defect this line is absorbed and never reported.
+  printf 'working: setup\ndone: PR https://example.test/pr/9\n' > "$status_file"
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a captain-relevant signal under a spaced path was absorbed by a working crew: $(cat "$out")"; }
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the surfaced signal did not name the spaced status path: $(cat "$out")"
+  [ "$(status_presentation_marker_offset "$state/.hb-surfaced-task" "$status_file")" = \
+    "$(size_of "$status_file")" ] \
+    || fail "the surfaced signal did not advance .hb-surfaced through the file end"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after the spaced-path signal failed"
+  grep "$(printf '\tsignal\t')" "$drain_out" | grep -F "$status_file" >/dev/null \
+    || fail "the spaced-path signal was not queued"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the spaced-path signal wake"
+  # Every watcher armed after a handled wake is a handling successor: without
+  # the marker the next round exits on the rearm-resurface recovery path before
+  # reaching the poll loop (parked_watch_round documents the same contract).
+  # watch_bg places its trailing args in command position, so they go through env.
+  successor=(env FM_WATCH_HANDLING_SUCCESSOR=1)
+
+  # 2. The heartbeat backstop must not re-deliver the line phase 1 surfaced:
+  #    .hb-surfaced already covers it, so a heartbeat pass absorbs and backs off.
+  #    A fresh captain-relevant append then ends the round by itself, so no
+  #    assertion ever needs a signal-kill against a still-polling watcher.
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 \
+    FM_SECONDMATE_LIVENESS_SECS=99999999 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "the heartbeat backstop re-delivered a status already surfaced under a spaced path: $(cat "$out")"
+  fi
+  [ "$(cat "$state/.heartbeat-streak" 2>/dev/null || echo 0)" -ge 1 ] \
+    || { reap "$pid"; fail "the spaced-path heartbeat never ran its backstop scan"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "the spaced-path heartbeat printed a wake reason: $(cat "$out")"; }
+  printf 'needs-decision [key=k1]: pick one\n' >> "$status_file"
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "the spaced-path heartbeat watcher ignored a new captain-relevant line"; }
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the new decision did not surface after the heartbeat pass"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the spaced-path decision wake"
+
+  # 3. A no-verb signal absorbs exactly once: the classified position commits,
+  #    so the next poll does not re-fire the same change (the latch loop).
+  printf 'working [at=%s]: progress\n' "$(date +%s)" >> "$status_file"
+  watch_bg "$state" "$fakebin" "$out" "${successor[@]}"
+  pid=$!
+  wait_for_absorbed "$state" "$pid" "absorbed benign signal:" \
+    || { reap "$pid"; fail "a no-verb signal under a spaced path was not absorbed by a working crew: $(cat "$out")"; }
+  [ "$(status_presentation_marker_offset "$state/.seen-task_status" "$status_file")" = \
+    "$(size_of "$status_file")" ] \
+    || { reap "$pid"; fail "the spaced-path absorb did not commit the classified position (latch loop)"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "the absorbed spaced-path signal printed a wake reason: $(cat "$out")"; }
+  printf 'done [at=%s]: second completion\n' "$(date +%s)" >> "$status_file"
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "the spaced-path absorb watcher ignored a new captain-relevant line"; }
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the second completion did not surface after the spaced-path absorb"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the second spaced-path wake"
+
+  # 4. This home's own self-announced append is recognized as owned: with the
+  #    classified position committed, the --resolve-key path must not wake.
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_wake_status_append_self_announced "$2" "$3" "resolved [key=k1]: answered: closed by this home"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" "$status_file" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the spaced-path bookkeeping close was not self-announced (rc=$rc)"
+  unset FM_FAKE_CREW_STATE
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · idle worker'
+  watch_bg "$state" "$fakebin" "$out" "${successor[@]}"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "the spaced-path self-announced close re-woke its own watcher: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "the spaced-path close printed a wake reason: $(cat "$out")"; }
+  printf 'blocked [at=%s]: worker still needs help\n' "$(date +%s)" >> "$status_file"
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a real worker line after the spaced-path close was swallowed"; }
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the worker line did not surface under a spaced path"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the spaced-path worker wake"
+  touch "$state/.last-heartbeat"
+
+  # 5. turn-end churn absorption works: a bare turn-end from a churning pane on
+  #    an unverifiable harness absorbs when the home opted in. This case's fake
+  #    tmux renders fresh bytes on every capture, which is both the churn
+  #    evidence the absorb needs and the guarantee that the stale backbone
+  #    never sees two identical hashes on a loaded runner.
+  window="test:fm-spacetask"
+  printf 'window=%s\nkind=ship\nharness=codex\n' "$window" > "$state/spacetask.meta"
+  : > "$state/spacetask.turn-ended"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "list-windows" ]; then printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}"; exit 0; fi
+if [ "${1:-}" = "capture-pane" ]; then printf 'tick %s\n' "$RANDOM$RANDOM$RANDOM"; exit 0; fi
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'the previous render')" > "$state/.hash-$key"
+  printf '0\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" \
+    FM_CONFIG_OVERRIDE="$(churn_config "$dir")" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_POLL=3 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  # The absorb needle names the new file, never just "absorbed benign": the
+  # triage log still holds earlier absorb lines, which would satisfy a generic
+  # needle before this watcher's first poll ran at all.
+  wait_for_absorbed "$state" "$pid" "spacetask.turn-ended" \
+    || { reap "$pid"; fail "a churning turn-end under a spaced path was not absorbed (flag was a no-op): $(cat "$out")"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "the spaced-path churned turn-end printed a wake reason: $(cat "$out")"; }
+  [ -s "$state/.churn-since-$key" ] \
+    || { reap "$pid"; fail "the spaced-path churn absorb did not open a bounded deferral window"; }
+  printf 'done [at=%s]: spacetask completion\n' "$(date +%s)" > "$state/spacetask.status"
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "the spaced-path churn watcher ignored a new captain-relevant line"; }
+  grep -F "signal: $state/spacetask.status" "$out" >/dev/null \
+    || fail "the spacetask completion did not surface under a spaced path"
+  unset FM_FAKE_CREW_STATE
+  pass "signal triage is correct under a home path containing a space"
+}
+
 # The reported bug, end to end through a real watcher: a crew reports something
 # the captain must act on and then keeps appending routine progress, which is
 # ordinary while the watcher lingers its signal grace window to coalesce a status
@@ -6459,3 +6617,4 @@ test_afk_one_shot_never_hands_off_captain_held_under_away_record
 test_paused_until_near_future_is_quiet_before_the_cadence
 test_paused_until_wrong_year_is_bounded_by_the_cadence
 test_paused_until_that_passed_is_rechecked_before_the_cadence
+test_space_path_signal_triage
