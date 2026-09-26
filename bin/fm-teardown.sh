@@ -2866,12 +2866,34 @@ secondmate_retire_open_holds() {  # <backlog>
   ' "$backlog" 2>/dev/null | head -n "$SECONDMATE_RETIRE_SECTION_LINES"
 }
 
-secondmate_retire_report_links() {  # <home>
-  local home=$1 f rel
+# Every report pointer below must resolve after the mate home is removed, so
+# each child report is copied (bounded) beside the summary as
+# reports/<child>.md and the emitted path names that archive.
+SECONDMATE_RETIRE_REPORT_LINES=${SECONDMATE_RETIRE_REPORT_LINES:-400}
+
+secondmate_retire_report_links() {  # <home> <out_dir>
+  local home=$1 out_dir=$2 f rel child dst lines
   for f in "$home"/data/*/report.md; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     rel=${f##*/data/}
-    printf -- '- %s\n' "data/$rel"
+    child=${rel%/report.md}
+    dst="$out_dir/reports/$child.md"
+    if mkdir -p -- "$out_dir/reports" 2>/dev/null \
+       && head -n "$SECONDMATE_RETIRE_REPORT_LINES" "$f" > "$dst.tmp.$$" 2>/dev/null; then
+      lines=$(wc -l < "$f" | tr -d ' ')
+      if [ "$lines" -gt "$SECONDMATE_RETIRE_REPORT_LINES" ]; then
+        printf '... (%s more lines truncated)\n' "$(( lines - SECONDMATE_RETIRE_REPORT_LINES ))" >> "$dst.tmp.$$"
+      fi
+      if mv -f -- "$dst.tmp.$$" "$dst"; then
+        printf -- '- reports/%s.md (archived from data/%s)\n' "$child" "$rel"
+      else
+        rm -f -- "$dst.tmp.$$"
+        printf -- '- data/%s (archive failed)\n' "$rel"
+      fi
+    else
+      rm -f -- "$dst.tmp.$$"
+      printf -- '- data/%s (archive failed)\n' "$rel"
+    fi
   done 2>/dev/null | sort | head -n 40
 }
 
@@ -2909,7 +2931,7 @@ write_secondmate_retirement_summary() {  # <home> <id>
     secondmate_retire_capture_file "Residual uncertainties (data/intake-residuals.md)" "$home/data/intake-residuals.md"
     secondmate_retire_capture_file "Charter (data/charter.md)" "$home/data/charter.md"
     printf '### Report artifacts\n\n'
-    secondmate_retire_report_links "$home"
+    secondmate_retire_report_links "$home" "$out_dir"
     printf '\n### PR links\n\n'
     grep -rhoE 'https://github\.com/[^[:space:])]*/pull/[0-9]+' \
       "$backlog" "$home"/data/*/report.md "$home"/data/*/brief.md 2>/dev/null \
