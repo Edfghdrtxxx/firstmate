@@ -669,7 +669,7 @@ seed_rollback_home_retire_record_clear() {  # <record> <abs_home>
 }
 
 seed_return_treehouse_home() {
-  local home=$1 abs_home marker_id='' record_id='' retire_record=''
+  local home=$1 abs_home marker_id='' record_id='' retire_record='' kept_returned=0
   abs_home=$(seed_rollback_target "$home" "treehouse-acquired home") || return 0
   if ! command -v treehouse >/dev/null 2>&1; then
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; treehouse command not found" >&2
@@ -681,18 +681,27 @@ seed_return_treehouse_home() {
   # unresolved rather than proof the slot moved on.
   record_id=$marker_id
   [ -n "$record_id" ] || record_id=${SEED_ID:-}
+  kept_returned=0
   if [ -n "$record_id" ]; then
     retire_record="$STATE/$record_id.home-retire"
     if seed_rollback_home_retire_record_foreign "$retire_record" "$abs_home"; then
       echo "warning: retirement obligation $retire_record still names $(sed -n 's/^home=//p' "$retire_record" | head -1); leaving it untouched" >&2
       retire_record=
+    elif [ -f "$retire_record" ] \
+         && [ "$(sed -n 's/^phase=//p' "$retire_record" | head -1)" = returned ] \
+         && [ "$(sed -n 's/^home=//p' "$retire_record" | head -1)" = "$abs_home" ]; then
+      # A later rollback must not downgrade or delete a record that already
+      # proves this home's lease was released.
+      kept_returned=1
     elif ! seed_rollback_home_retire_record_write "$record_id" "$abs_home" recorded; then
       retire_record=
     fi
   fi
   ( cd "$FM_ROOT" && treehouse return --force "$abs_home" >/dev/null ) || {
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; lease may still be held" >&2
-    seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
+    if [ "$kept_returned" -eq 0 ]; then
+      seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
+    fi
     return 0
   }
   if [ -n "$retire_record" ] \
