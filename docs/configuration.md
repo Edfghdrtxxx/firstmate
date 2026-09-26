@@ -685,6 +685,7 @@ A project-less seed requires no existing project clones or `data/projects.md` en
 A preexisting project-bearing charter is also refused until it is re-scaffolded with `--no-projects` or removed.
 
 The lease is held under the secondmate id until explicit retirement or seed rollback returns it, so normal restarts do not free or recycle the home.
+Retirement archives a bounded summary of the mate's private state at `data/<id>/retirement.md` in the parent home, then releases the lease with `treehouse return` and removes the returned slot directory with `treehouse destroy`; the pending removal is recorded at `state/<id>.home-retire` so an interrupted or refused removal is retried and reported by the next session start rather than silently orphaned.
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 
 ### Project modes and backlog handoff

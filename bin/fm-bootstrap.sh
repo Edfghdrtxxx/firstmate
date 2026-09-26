@@ -1288,6 +1288,70 @@ backlog_record_reconcile() {
     fm_lock_release "$meta_lock"
   done
 }
+# Retired-home reconciliation: bin/fm-teardown.sh records
+# state/<id>.home-retire before releasing a secondmate home's treehouse lease,
+# and clears it once the returned directory is gone. A surviving record means a
+# retire was interrupted between lease release and directory removal, or the
+# removal itself failed; both leave the private home on disk while every
+# registry and task record is already gone. Retry the removal here - destroy's
+# own guards refuse a slot a new lease already holds - and report whatever
+# still cannot be reconciled, then drop records that provably need no more
+# action (directory absent or no longer marked for that mate).
+retired_home_reconcile() {
+  local record id home marker_id out rc=0
+  for record in "$STATE"/*.home-retire; do
+    [ -e "$record" ] || [ -L "$record" ] || continue
+    if ! fm_backlog_record_present "$record" "home retirement record" "$STATE"; then
+      echo "HOME_RETIRE: unsafe retirement record refused: $FM_BACKLOG_TRANSITION_ERROR"
+      rc=2
+      continue
+    fi
+    id=; home=; marker_id=
+    while IFS='=' read -r k v; do
+      case "$k" in
+        id) id=$v ;;
+        home) home=$v ;;
+      esac
+    done < "$record"
+    if [ -z "$id" ] || [ -z "$home" ]; then
+      echo "HOME_RETIRE: $record is incomplete; reconcile $record by hand"
+      rc=2
+      continue
+    fi
+    if [ ! -e "$home" ] && [ ! -L "$home" ]; then
+      rm -f -- "$record"
+      continue
+    fi
+    # Never remove a directory that is not still marked as this mate's home:
+    # a re-leased slot already belongs to the next tenant.
+    if [ -f "$home/.fm-secondmate-home" ]; then
+      marker_id=$(cat "$home/.fm-secondmate-home" 2>/dev/null || true)
+      if [ "$marker_id" != "$id" ]; then
+        rm -f -- "$record"
+        echo "BOOTSTRAP_INFO: $home was re-marked for ${marker_id:-unknown}; the retirement obligation for $id is resolved"
+        continue
+      fi
+    fi
+    if ! command -v treehouse >/dev/null 2>&1; then
+      echo "HOME_RETIRE: $id: treehouse is unavailable; $home may remain after retirement"
+      rc=2
+      continue
+    fi
+    if out=$( ( cd "$FM_ROOT" && treehouse destroy --yes "$home" ) 2>&1 ); then
+      [ -n "$out" ] && printf '%s\n' "$out" >&2
+    else
+      [ -n "$out" ] && printf '%s\n' "$out" >&2
+    fi
+    if [ -e "$home" ] || [ -L "$home" ]; then
+      echo "HOME_RETIRE: $id: retired home $home could not be removed; inspect it and delete or archive it by hand"
+      rc=2
+    else
+      rm -f -- "$record"
+      echo "BOOTSTRAP_INFO: removed retired secondmate home $home left behind by an interrupted cleanup"
+    fi
+  done
+  return "$rc"
+}
 
 startup_memory_budget_setup() {
   # Primary bootstrap owns default publication. A secondmate is deliberately
@@ -1374,6 +1438,7 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ] && local_phase; then
       exit 1
     fi
   fi
+  retired_home_reconcile || true
 fi
 
 # Local detection: presence, version floors, and configuration. Nothing here

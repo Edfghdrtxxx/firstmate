@@ -495,7 +495,25 @@ EOF
     return 0
   fi
   url=$(source_origin_url "$project" "$mode" "$src") || return 1
-  git clone --quiet "$url" "$dst"
+  # Seed the project as a hardlinked local clone of the parent's checkout
+  # (`git clone --local` shares the parent's object files at seed time while
+  # keeping a fully independent .git: own refs, own config, own origin, so
+  # fleet-sync and mate workers never mutate the parent's repo). This drops the
+  # per-mate duplicated object store the 2026-09-26 audit measured (~1.7G for
+  # one home). Linked worktrees and --shared/--reference were evaluated and
+  # rejected; docs/secondmate-project-storage.md owns that finding. A failed
+  # local clone falls back to cloning the origin URL directly.
+  if git clone --quiet --local "$src" "$dst" 2>/dev/null; then
+    git -C "$dst" remote set-url origin "$url" || {
+      rm -rf -- "$dst"
+      echo "error: could not repoint seeded project $project origin to $url" >&2
+      return 1
+    }
+  else
+    rm -rf -- "$dst"
+    echo "warning: local clone of $project from $src failed; cloning from origin instead" >&2
+    git clone --quiet "$url" "$dst" || return 1
+  fi
 }
 
 validate_seed_project() {

@@ -413,6 +413,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/secondmate-project-storage.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/scripts.md",
       "audience": "operator-current"
     },
