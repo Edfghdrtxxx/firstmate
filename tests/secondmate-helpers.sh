@@ -116,13 +116,25 @@ case "${1:-}" in
   return)
     shift
     target=
+    want_holder=
     while [ $# -gt 0 ]; do
       case "$1" in
         --force) ;;
+        --if-lease-holder) shift; want_holder=${1:-} ;;
+        --if-lease-holder=*) want_holder=${1#--if-lease-holder=} ;;
         *) target=$1 ;;
       esac
       shift
     done
+    if [ -n "$want_holder" ]; then
+      actual_holder=
+      [ -n "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] && [ -f "$FM_FAKE_TREEHOUSE_LEASE_FILE" ] \
+        && actual_holder=$(cat "$FM_FAKE_TREEHOUSE_LEASE_FILE" 2>/dev/null || true)
+      if [ "$actual_holder" != "$want_holder" ]; then
+        printf 'lease holder %s does not match %s\n' "$want_holder" "${actual_holder:-none}" >&2
+        exit 18
+      fi
+    fi
     # Real `treehouse return` fails on a path that is not a leased pool slot
     # ("cannot resolve a treehouse pool"), which is what drives teardown's
     # raw-removal fallback for non-pool child worktrees. A configured lease

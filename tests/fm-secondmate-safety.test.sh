@@ -1825,6 +1825,8 @@ EOF
     || fail "retirement obligation does not name the surviving home path"
   grep -F 'id=domain' "$home/state/domain.home-retire" >/dev/null \
     || fail "retirement obligation does not name the retired mate"
+  grep -F 'lease_holder=domain' "$home/state/domain.home-retire" >/dev/null \
+    || fail "retirement obligation does not name the lease holder"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null && fail "teardown kept the registry route"
   pass "secondmate teardown records a durable obligation when the returned home resists removal"
 }
@@ -1918,6 +1920,40 @@ EOF
     && fail "teardown named the wrong failure for a returned-phase obligation"
   [ -f "$home/state/domain.home-retire" ] || fail "teardown dropped the surviving retirement obligation"
   pass "secondmate teardown reports an unremovable returned slot without blaming the lease"
+}
+
+test_retired_home_reconcile_returns_only_the_recorded_lease_holder() {
+  local home slot fakebin log lease record out
+  home="$TMP_ROOT/reconcile-holder-home"
+  slot="$TMP_ROOT/reconcile-holder-slot"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$slot"
+  printf 'domain\n' > "$slot/.fm-secondmate-home"
+  record="$home/state/domain.home-retire"
+  {
+    printf 'id=domain\n'
+    printf 'home=%s\n' "$slot"
+    printf 'phase=recorded\n'
+    printf 'lease_holder=domain\n'
+    printf 'at=1\n'
+  } > "$record"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/reconcile-holder-fake")
+  log="$TMP_ROOT/reconcile-holder-fake/tmux.log"
+  lease="$TMP_ROOT/reconcile-holder-fake/lease"
+  printf 'other\n' > "$lease"
+
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1 || true)
+  grep -F "treehouse return --if-lease-holder domain $slot" "$log" >/dev/null \
+    || fail "reconcile did not return only the recorded lease holder"
+  grep -F "treehouse return --force" "$log" >/dev/null \
+    && fail "reconcile returned a retirement with --force"
+  [ -f "$lease" ] || fail "reconcile released a lease held by a different holder"
+  [ -d "$slot" ] || fail "reconcile removed a slot whose lease it does not hold"
+  [ -f "$record" ] || fail "reconcile dropped the obligation after a refused return"
+  grep -F "no proof the lease is released" "$out" >/dev/null \
+    && fail "reconcile claimed a held record had no lease holder"
+  pass "retired-home reconcile returns only the recorded lease holder"
 }
 
 test_secondmate_teardown_pins_retirement_records_outside_redirected_home() {
@@ -3431,6 +3467,7 @@ test_secondmate_teardown_removes_returned_home_and_archives_summary
 test_secondmate_teardown_records_obligation_when_returned_home_resists_removal
 test_secondmate_teardown_preserves_foreign_obligation_record
 test_secondmate_teardown_reports_unremovable_returned_slot
+test_retired_home_reconcile_returns_only_the_recorded_lease_holder
 test_secondmate_teardown_pins_retirement_records_outside_redirected_home
 test_secondmate_teardown_refuses_ambiguous_and_mismatched_registry_bindings
 test_secondmate_teardown_sweeps_process_events_before_removal

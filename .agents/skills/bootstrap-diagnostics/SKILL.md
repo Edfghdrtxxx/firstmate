@@ -58,9 +58,14 @@ When any diagnostic needs captain attention, report the plain consequence and re
   A validation error means the record cannot be trusted, so do not assume cleanup completed or follow any path or argument stored in it.
   Read the named reason, inspect the marker as inert data when validation failed, fix the record or backlog-file problem, and rerun session start so the valid recorded transition replays.
   Never delete `state/<id>.backlog-close` by hand - that can discard a completion link or captain-call retention the cleanup captured, and the surviving marker prevents the record sweep from starting the item meanwhile.
-- `HOME_RETIRE: <id>: retired home <path> could not be removed; inspect it and delete or archive it by hand` - a secondmate teardown released the home's pool lease but could not prove the returned directory was removed, so `state/<id>.home-retire` recorded the obligation and this sweep's `treehouse destroy` retry also failed.
-  The retirement itself already completed (route, metadata, and lease are gone); what remains is a directory that may still hold the mate's private files.
-  A bounded summary of that state already exists at `data/<id>/retirement.md`; inspect the home, then delete or archive it by hand and remove `state/<id>.home-retire`.
+- `HOME_RETIRE: <id>: retired home <path> could not be removed; inspect it and delete or archive it by hand` - a secondmate teardown could not prove the returned directory was removed, so `state/<id>.home-retire` still records the obligation and this sweep's `treehouse destroy` retry also failed.
+  Read `phase=` and `lease_holder=` before touching the directory.
+  `phase=returned` means the lease for that record is already released; what remains is a directory that may still hold the mate's private files, and deleting it does not strand a lease.
+  `phase=recorded` with `lease_holder=` means the sweep returns only that holder via `treehouse return --if-lease-holder`.
+  If that return did not succeed, the lease may still be held: do not delete the directory by hand, because that strands the pool lease.
+  A record with no `lease_holder=` is the same leased-and-unremovable case: the sweep will not return it.
+  A bounded summary of the retired state may already exist at `data/<id>/retirement.md`.
+  After the directory is actually gone and the lease is released, remove `state/<id>.home-retire`.
 - `HOME_RETIRE: <id>: treehouse is unavailable; ...` - same obligation, but the sweep could not retry because treehouse is not on PATH.
   Install or expose treehouse and rerun session start, or handle the named path by hand.
 - `HOME_RETIRE: unsafe retirement record refused: <reason>` / `HOME_RETIRE: <record> is incomplete` - the `state/<id>.home-retire` record itself failed validation.

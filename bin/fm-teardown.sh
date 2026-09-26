@@ -2662,6 +2662,9 @@ firstmate_home_retire_record_write() {  # <record> <id> <home> <phase>
     printf 'id=%s\n' "$id"
     printf 'home=%s\n' "$home"
     printf 'phase=%s\n' "$phase"
+    # The mate id is the treehouse lease holder from `get --lease-holder`.
+    # Reconcile returns only that holder, never a slot re-leased under the same id.
+    printf 'lease_holder=%s\n' "$id"
     printf 'at=%s\n' "$(date +%s)"
   } > "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
