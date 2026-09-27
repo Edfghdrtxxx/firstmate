@@ -2255,6 +2255,56 @@ EOF
   pass "force teardown names only surviving nested capture paths"
 }
 
+test_secondmate_force_teardown_keeps_same_id_nested_captures() {
+  local home subhome home_a home_b ga gb fakebin log summary
+  home="$TMP_ROOT/nested-lineage-home"
+  subhome="$TMP_ROOT/nested-lineage-subhome"
+  home_a="$TMP_ROOT/nested-lineage-home-a"
+  home_b="$TMP_ROOT/nested-lineage-home-b"
+  ga="$TMP_ROOT/nested-lineage-gamma-a"
+  gb="$TMP_ROOT/nested-lineage-gamma-b"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/data" \
+    "$home_a/state" "$home_a/data" "$home_b/state" "$home_b/data" \
+    "$ga/state" "$ga/data" "$gb/state" "$gb/data"
+  mark_firstmate_home "$subhome"
+  mark_firstmate_home "$home_a"
+  mark_firstmate_home "$home_b"
+  mark_firstmate_home "$ga"
+  mark_firstmate_home "$gb"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'alpha\n' > "$home_a/.fm-secondmate-home"
+  printf 'beta\n' > "$home_b/.fm-secondmate-home"
+  printf 'gamma\n' > "$ga/.fm-secondmate-home"
+  printf 'gamma\n' > "$gb/.fm-secondmate-home"
+  printf 'gamma-a learning\n' > "$ga/data/learnings.md"
+  printf 'gamma-b learning\n' > "$gb/data/learnings.md"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/alpha.meta" "$home_a"
+  fm_write_secondmate_meta "$subhome/state/beta.meta" "$home_b"
+  fm_write_secondmate_meta "$home_a/state/gamma.meta" "$ga"
+  fm_write_secondmate_meta "$home_b/state/gamma.meta" "$gb"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/nested-lineage-fake")
+  log="$TMP_ROOT/nested-lineage-fake/tmux.log"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/nested-lineage-fake/pane.txt" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "force teardown with same-id nested homes failed"
+  [ ! -d "$ga" ] || fail "force teardown retained the first same-id nested home"
+  [ ! -d "$gb" ] || fail "force teardown retained the second same-id nested home"
+  summary="$home/data/domain/retirement.md"
+  [ -f "$summary" ] || fail "force teardown did not write the retirement summary"
+  grep -Fx 'gamma queued=0 learnings=nested/alpha/gamma/learnings.md' "$summary" >/dev/null \
+    || fail "nested note did not name the alpha-lineage capture path"
+  grep -Fx 'gamma queued=0 learnings=nested/beta/gamma/learnings.md' "$summary" >/dev/null \
+    || fail "nested note did not name the beta-lineage capture path"
+  grep -F 'gamma-a learning' "$home/data/domain/nested/alpha/gamma/learnings.md" >/dev/null \
+    || fail "teardown did not archive the first same-id nested learnings"
+  grep -F 'gamma-b learning' "$home/data/domain/nested/beta/gamma/learnings.md" >/dev/null \
+    || fail "teardown did not archive the second same-id nested learnings"
+  pass "force teardown keys nested captures by mate-id lineage"
+}
+
 test_secondmate_teardown_pinned_nested_note_omits_file_paths() {
   local home subhome childhome fmroot fakebin log lease control_state control_data summary
   home="$TMP_ROOT/nested-pin-home"
@@ -3600,6 +3650,7 @@ test_secondmate_teardown_refuses_process_events_without_sweep_script
 test_secondmate_teardown_preserves_process_events_on_later_refusal
 test_secondmate_force_teardown_sweeps_nested_homes
 test_secondmate_force_teardown_nested_note_names_only_surviving_paths
+test_secondmate_force_teardown_keeps_same_id_nested_captures
 test_secondmate_teardown_pinned_nested_note_omits_file_paths
 test_secondmate_force_teardown_preserves_nested_restore_status
 test_secondmate_teardown_refuses_failed_leased_home_return

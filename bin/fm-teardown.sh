@@ -2936,13 +2936,13 @@ secondmate_retire_nested_capture() {  # <src> <dst>
   mv -f -- "$dst.tmp.$$" "$dst"
 }
 
-secondmate_retire_nested_note() {  # <child_home> <child_id>
-  local home=$1 id=$2 notes dir rel queued f child fields reports
+secondmate_retire_nested_note() {  # <child_home> <child_id> [lineage_prefix]
+  local home=$1 id=$2 prefix=${3:-} notes dir rel queued f child fields reports
   notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
   [ -n "$notes" ] || return 0
   [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 0
-  dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID/nested/$id"
-  rel="nested/$id"
+  dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID/nested/$prefix$id"
+  rel="nested/$prefix$id"
   queued=0
   if [ -f "$home/data/backlog.md" ] && [ ! -L "$home/data/backlog.md" ]; then
     queued=$(grep -c '^- \[ \]' "$home/data/backlog.md" 2>/dev/null || true)
@@ -3582,8 +3582,8 @@ endpoint_close_refusal() {  # <subject> <backend> <target> <honors-force>
   return 1
 }
 
-cleanup_firstmate_home_children() {
-  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc
+cleanup_firstmate_home_children() {  # <home> [lineage_prefix]
+  local home=$1 prefix=${2:-} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -3631,8 +3631,8 @@ cleanup_firstmate_home_children() {
       child_home=$(meta_value "$child_meta" home)
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
-        cleanup_firstmate_home_children "$child_home" || return $?
-        secondmate_retire_nested_note "$child_home" "$child_id"
+        cleanup_firstmate_home_children "$child_home" "$prefix$child_id/" || return $?
+        secondmate_retire_nested_note "$child_home" "$child_id" "$prefix"
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return $?
       fi
     elif [ "$child_backend" = orca ]; then
