@@ -20,7 +20,11 @@
 #       the .fm-secondmate-home identity marker, and data/secondmates.md is updated.
 #       Seeding is transactional: on validation, clone, init, or registry failure,
 #       generated briefs, new homes, new project clones, and registry edits are
-#       rolled back. Treehouse-acquired homes are returned only when the rollback
+#       rolled back. Rollback records the removal obligation
+#       state/<id>.home-retire before returning a leased home, then destroys
+#       the returned slot; a failed destroy leaves the obligation for the next
+#       locked session start to retry and report. Treehouse-acquired homes are
+#       returned only when the rollback
 #       target is safe; a failed return warns because the lease may still be held.
 #       Set FM_SECONDMATE_CHARTER='<charter>' to seed from inline charter text
 #       when no filled charter brief exists. Set FM_SECONDMATE_SCOPE='<scope>'
@@ -637,6 +641,7 @@ seed_rollback_home_retire_record_write() {  # <id> <home> <phase>
   record="$STATE/$id.home-retire"
   mkdir -p -- "$STATE" || return 1
   tmp="$record.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   {
     printf 'id=%s\n' "$id"
     printf 'home=%s\n' "$home"

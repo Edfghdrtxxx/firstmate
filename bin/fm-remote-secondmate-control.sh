@@ -37,6 +37,12 @@
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's panes or workspace and never
 # stops fm-remote or removes a sibling secondmate's workspace or panes.
+# Retirement also redirects STATE/DATA into the home being removed, so it
+# pins its obligation record and bounded summary into a temp dir and prints
+# them back to the calling parent as FM_RETIRE_SUMMARY_BEGIN/END and
+# FM_RETIRE_RECORD_BEGIN/END blocks; the parent owns storing and sweeping.
+# A retire whose home is already gone prints `already-retired: <id>` and
+# exits 0 before the sourced libraries can recreate that home's state dir.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
@@ -60,6 +66,25 @@ TARGET_HOME=${FM_HOME:?FM_HOME is required}
 CONTROL_STATE="$TARGET_HOME/state/parent-route"
 CONTROL_DATA="$TARGET_HOME/data/.parent-route"
 REMOTE_HERDR_SESSION=fm-remote
+
+# A retire of a home that is already gone has to be decided before the
+# libraries below are sourced. Those libraries create $FM_HOME/state while
+# loading, which would recreate this home and make the absence look like an
+# unsafe empty directory. The parent then cannot finish with --force.
+if [ "${1:-}" = retire ] && [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
+  case "${2:-}" in
+    ''|*[!A-Za-z0-9._-]*)
+      printf 'error: invalid secondmate id: %s\n' "${2:-}" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$#" -gt 3 ] || { [ "$#" -eq 3 ] && [ "$3" != --force ]; }; then
+    printf 'error: invalid retire arguments\n' >&2
+    exit 2
+  fi
+  printf 'already-retired: %s\n' "$2"
+  exit 0
+fi
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
