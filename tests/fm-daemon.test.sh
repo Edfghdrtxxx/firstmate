@@ -2549,6 +2549,76 @@ test_max_defer_afk_inactive_does_not_flush_or_alarm() {
   pass "max-defer does not flush or alarm while afk is inactive"
 }
 
+# Away idle nudge: housekeeping ticks at simulated times against a supervisor
+# pane whose native herdr state the test controls. <flag> is state/.afk's content
+# ("" leaves it absent). Each case gets a fresh home and a fresh subshell, so the
+# daemon's in-memory idle clock starts clean; IDLE_NUDGE_OUT gets the queued
+# escalations.
+IDLE_NUDGE_CASES=0
+idle_nudge_case() {  # <flag> <step>... (tick <secs> | busy | idle | delivered)
+  local dir case_state step
+  IDLE_NUDGE_CASES=$((IDLE_NUDGE_CASES + 1))
+  dir=$(make_supercase "idle-nudge-$IDLE_NUDGE_CASES"); case_state="$dir/state"
+  if [ -n "$1" ]; then printf '%s\n' "$1" > "$case_state/.afk"; fi
+  shift
+  (
+    FM_STATE_OVERRIDE="$case_state" . "$ROOT/bin/fm-wake-lib.sh"
+    # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
+    _now() { printf '%s\n' "$FAKE_NOW"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
+    fm_backend_busy_state() {
+      [ "$1" = herdr ] && [ "$2" = "default:w1:p1" ] || fail "unexpected busy_state args: $1 $2"
+      printf '%s' "$FAKE_NATIVE"
+    }
+    # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
+    fm_backend_capture() { printf '> \n'; }
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET=default:w1:p1
+    FM_ESCALATE_BATCH_SECS=99999 FM_MAX_DEFER_SECS=0
+    base=$(date +%s); FAKE_NATIVE=idle
+    while [ "$#" -gt 0 ]; do
+      step=$1; shift
+      case "$step" in
+        tick) FAKE_NOW=$((base + $1)); shift; housekeeping "$case_state" ;;
+        busy|idle) FAKE_NATIVE=$step ;;
+        delivered) : > "$case_state/.subsuper-escalations" ;;
+      esac
+    done
+  ) || fail "idle nudge case $IDLE_NUDGE_CASES failed"
+  IDLE_NUDGE_OUT=$(cat "$case_state/.subsuper-escalations" 2>/dev/null || true)
+}
+
+test_away_idle_nudge_reminds_after_threshold_once() {
+  idle_nudge_case away tick 0 tick 1799
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "reminded before the supervisor had been idle for the threshold: $IDLE_NUDGE_OUT"
+  idle_nudge_case away tick 0 tick 1800 tick 3600 tick 9000
+  [ "$IDLE_NUDGE_OUT" = "$IDLE_NUDGE_TEXT" ] \
+    || fail "an idle away supervisor did not get exactly one queued reminder: $IDLE_NUDGE_OUT"
+  idle_nudge_case away tick 0 tick 1800 delivered tick 1815 tick 3614
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "the clock did not restart after the reminder was delivered: $IDLE_NUDGE_OUT"
+  idle_nudge_case away tick 0 tick 1800 delivered tick 1815 tick 3615
+  [ "$IDLE_NUDGE_OUT" = "$IDLE_NUDGE_TEXT" ] || fail "a still-idle supervisor was not reminded again: $IDLE_NUDGE_OUT"
+  pass "an idle away supervisor gets one reminder per idle threshold"
+}
+
+test_away_idle_nudge_busy_restarts_clock() {
+  idle_nudge_case away tick 0 busy tick 1000 idle tick 1015 tick 2814
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "a busy supervisor did not restart the idle clock: $IDLE_NUDGE_OUT"
+  idle_nudge_case away tick 0 busy tick 1000 idle tick 1015 tick 2815
+  [ "$IDLE_NUDGE_OUT" = "$IDLE_NUDGE_TEXT" ] \
+    || fail "no reminder after a full idle threshold following busy: $IDLE_NUDGE_OUT"
+  pass "a busy supervisor restarts the away idle clock"
+}
+
+test_idle_nudge_only_in_away_mode() {
+  idle_nudge_case quiet tick 0 tick 99999
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "quiet mode reminded the present captain's session: $IDLE_NUDGE_OUT"
+  idle_nudge_case "" tick 0 tick 99999
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "a reminder was queued with no away posture: $IDLE_NUDGE_OUT"
+  FM_IDLE_NUDGE_SECS=0 idle_nudge_case away tick 0 tick 99999
+  [ -z "$IDLE_NUDGE_OUT" ] || fail "FM_IDLE_NUDGE_SECS=0 did not disable the reminder: $IDLE_NUDGE_OUT"
+  pass "the idle reminder runs only in away mode and can be disabled"
+}
+
 # --- backend-independent active wedge alert ---------------------------------
 # These cover the 2026-07-10 overnight-incident fix: the max-defer wedge alarm's
 # ACTIVE alert channel must reach the captain even when the wedged pane and its
@@ -2832,7 +2902,7 @@ test_wedge_alarm_shutdown_stops_active_notifier_group() {
   (
     set -m
     sh -c 'sleep 30 & printf "%s" "$!" > "$1"; wait' sh "$child_file" &
-    pid=$!
+    pid=$(jobs -p)
     while [ ! -s "$child_file" ]; do sleep 0.05; done
     child=$(cat "$child_file")
     WEDGE_ALARM_NOTIFIER_PID=$pid
@@ -3260,6 +3330,9 @@ test_inject_enter_failure_logs_confirmation_stage
 test_bounded_digest_full_text_kept_after_typing
 test_below_max_defer_does_nothing
 test_max_defer_afk_inactive_does_not_flush_or_alarm
+test_away_idle_nudge_reminds_after_threshold_once
+test_away_idle_nudge_busy_restarts_clock
+test_idle_nudge_only_in_away_mode
 test_wedge_alarm_library_mode_defaults_to_discard
 test_wake_helpers_replace_inherited_notifier_override
 test_wedge_alarm_discard_seam_fires_nothing

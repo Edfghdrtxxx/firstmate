@@ -18,8 +18,9 @@ This skill is a thin wrapper.
 Every mechanism below - the daemon, its injection, its busy/composer guards,
 its classification policy, its reliability properties - is owned once by the
 `afk` skill and is IDENTICAL in quiet mode; nothing here restates it.
-The only things quiet mode changes are which mode the flag declares and what
-exits it.
+The only things quiet mode changes are which mode the flag declares, what
+exits it, and that the away-only idle reminder (`FM_IDLE_NUDGE_SECS`, owned
+by the `afk` skill) never fires here - a present captain needs no nudge.
 
 ## What it does
 
