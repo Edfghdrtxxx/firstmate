@@ -986,9 +986,28 @@ remote_outbox_cleanup() {
   )
 }
 
-remote_retire_parent_obligation() {  # <host> <remote_home>
-  local host=$1 remote_home=$2 record tmp
+remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
+  local host=$1 remote_home=$2 out=$3 fail=$4 record tmp summary body
+  summary="$DATA/$ID/retirement.md"
+  if printf '%s\n' "$out" | grep -q '^FM_RETIRE_SUMMARY_BEGIN$'; then
+    mkdir -p -- "$DATA/$ID" || return 1
+    tmp="$summary.tmp.$$"
+    printf '%s\n' "$out" | awk '
+      $0 == "FM_RETIRE_SUMMARY_BEGIN" { keep = 1; next }
+      $0 == "FM_RETIRE_SUMMARY_END" { keep = 0; exit }
+      keep { print }
+    ' > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    mv -f -- "$tmp" "$summary" || { rm -f -- "$tmp"; return 1; }
+  fi
+  [ "$fail" -ne 0 ] || return 0
   record="$STATE/$ID.home-retire"
+  if [ -f "$record" ] && [ ! -L "$record" ]; then
+    body=$(sed -n 's/^home=//p' "$record" | head -1)
+    if [ -n "$body" ] && [ "$body" != "$remote_home" ] && { [ -e "$body" ] || [ -L "$body" ]; }; then
+      echo "warning: retirement obligation $record still names $body; leaving it untouched" >&2
+      return 0
+    fi
+  fi
   mkdir -p -- "$STATE" || return 1
   tmp="$record.tmp.$$"
   {
@@ -1036,9 +1055,9 @@ remote_secondmate_teardown() {
   else
     if out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh retire "$ID" < /dev/null 2>&1); then rc=0; else rc=$?; fi
   fi
+  remote_retire_parent_store "$remote_host" "$remote_home" "$out" "$rc" || true
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
-    remote_retire_parent_obligation "$remote_host" "$remote_home" || true
     if [ "$rc" -eq 255 ]; then
       echo "error: remote retirement completion is unknown; preserving the route and local records for same-host reconciliation" >&2
     elif ! "$SCRIPT_DIR/fm-procevent-remote-reply.sh" arm-locked "$ID" >/dev/null 2>&1; then

@@ -688,7 +688,8 @@ The lease is held under the secondmate id until explicit retirement or seed roll
 Retirement archives a bounded summary of the mate's private state at `data/<id>/retirement.md` in the parent home, then releases the lease with `treehouse return` and removes the returned slot directory with `treehouse destroy`; the pending removal is recorded at `state/<id>.home-retire` so an interrupted or refused removal is retried and reported by the next session start rather than silently orphaned.
 Seed rollback that releases a leased home it cannot remove records the same obligation.
 The remote-retire control route keeps its control state and data inside the home being removed.
-If that home is still present after teardown, the calling parent records `phase=remote` in its own state and does not write the obligation into the code root.
+It pins the obligation and the bounded summary outside that home and the calling parent stores the summary in its own `data/<id>/retirement.md`.
+If the home is still present after teardown, the parent also records `phase=remote` and does not write the obligation into the code root.
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 
 ### Project modes and backlog handoff
