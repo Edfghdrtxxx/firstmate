@@ -13,8 +13,10 @@
 # A fake tmux (window ops are logged to FM_FAKE_TMUX_LOG, list-windows returns
 # FM_FAKE_TMUX_WINDOW, capture-pane echoes FM_FAKE_TMUX_CAPTURE) plus a fake
 # treehouse (durable lease of FM_FAKE_TREEHOUSE_HOME, recording the lease holder
-# to FM_FAKE_TREEHOUSE_LEASE_FILE; `return` removes the target and lease unless
-# FM_FAKE_TREEHOUSE_RETURN_FAIL is set). Echoes the fakebin dir.
+# to FM_FAKE_TREEHOUSE_LEASE_FILE; `return` releases the lease without deleting
+# the directory - matching real behavior - unless FM_FAKE_TREEHOUSE_RETURN_FAIL
+# is set; `destroy` refuses a still-leased slot and otherwise removes the target
+# unless FM_FAKE_TREEHOUSE_DESTROY_FAIL is set). Echoes the fakebin dir.
 make_fake_tmux() {
   local dir=$1 fakebin capture
   fakebin=$(fm_fakebin "$dir")
@@ -114,16 +116,58 @@ case "${1:-}" in
   return)
     shift
     target=
+    want_holder=
     while [ $# -gt 0 ]; do
       case "$1" in
         --force) ;;
+        --if-lease-holder) shift; want_holder=${1:-} ;;
+        --if-lease-holder=*) want_holder=${1#--if-lease-holder=} ;;
         *) target=$1 ;;
       esac
       shift
     done
+    if [ -n "$want_holder" ]; then
+      actual_holder=
+      [ -n "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] && [ -f "$FM_FAKE_TREEHOUSE_LEASE_FILE" ] \
+        && actual_holder=$(cat "$FM_FAKE_TREEHOUSE_LEASE_FILE" 2>/dev/null || true)
+      if [ "$actual_holder" != "$want_holder" ]; then
+        printf 'lease holder %s does not match %s\n' "$want_holder" "${actual_holder:-none}" >&2
+        exit 18
+      fi
+    fi
+    # Real `treehouse return` fails on a path that is not a leased pool slot
+    # ("cannot resolve a treehouse pool"), which is what drives teardown's
+    # raw-removal fallback for non-pool child worktrees. A configured lease
+    # file models the slot being leased; absent or removed means return fails.
+    if [ -z "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] || [ ! -e "$FM_FAKE_TREEHOUSE_LEASE_FILE" ]; then
+      printf 'cannot resolve a treehouse pool from %s: not a pool directory\n' "${target:-.}" >&2
+      exit 16
+    fi
     [ -z "${FM_FAKE_TREEHOUSE_RETURN_FAIL:-}" ] || exit 17
-    [ -n "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] && rm -f "$FM_FAKE_TREEHOUSE_LEASE_FILE"
-    [ -n "$target" ] && rm -rf -- "$target"
+    rm -f "$FM_FAKE_TREEHOUSE_LEASE_FILE"
+    # Real `treehouse return` releases the lease but never deletes the slot
+    # directory; removal is teardown's job via `destroy`.
+    exit 0
+    ;;
+  destroy)
+    shift
+    target=
+    yes=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --yes) yes=1 ;;
+        --all|--include-*) ;;
+        *) target=$1 ;;
+      esac
+      shift
+    done
+    # Real destroy refuses a leased slot even with --yes.
+    [ -z "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] || [ ! -e "$FM_FAKE_TREEHOUSE_LEASE_FILE" ] || {
+      printf 'Skipped 1 worktree: leased\n' >&2
+      exit 3
+    }
+    [ -z "${FM_FAKE_TREEHOUSE_DESTROY_FAIL:-}" ] || exit 4
+    [ "$yes" = 1 ] && [ -n "$target" ] && rm -rf -- "$target"
     exit 0
     ;;
 esac
