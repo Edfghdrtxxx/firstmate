@@ -637,6 +637,7 @@ seed_rollback_home_retire_record_write() {  # <id> <home> <phase>
   record="$STATE/$id.home-retire"
   mkdir -p -- "$STATE" || return 1
   tmp="$record.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   {
     printf 'id=%s\n' "$id"
     printf 'home=%s\n' "$home"
