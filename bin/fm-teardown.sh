@@ -1001,6 +1001,18 @@ secondmate_retire_summary_dir_validate() {  # <summary-dir>
   return 0
 }
 
+secondmate_retire_nested_prefix_validate() {  # <base> <prefix>
+  local base=$1 prefix=$2 cursor comp
+  cursor="$base/nested"
+  prefix=${prefix%/}
+  while [ -n "$prefix" ]; do
+    comp=${prefix%%/*}
+    [ "$comp" = "$prefix" ] && prefix= || prefix=${prefix#*/}
+    cursor="$cursor/$comp"
+    secondmate_retire_summary_dir_validate "$cursor" || return 1
+  done
+}
+
 remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
   local host=$1 remote_home=$2 out=$3 fail=$4 record tmp summary body
   summary="$DATA/$ID/retirement.md"
@@ -1032,6 +1044,7 @@ remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
   fi
   mkdir -p -- "$STATE" || return 1
   tmp="$record.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   {
     printf 'id=%s\n' "$ID"
     printf 'home=%s\n' "$remote_home"
@@ -1125,6 +1138,7 @@ remote_secondmate_teardown() {
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
   tmp="$SECONDMATE_REG.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
   [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" cleaned_up "$ID" || true
@@ -2737,6 +2751,7 @@ firstmate_home_retire_record_write() {  # <record> <id> <home> <phase>
   # created; refusing here would leave the leased home in place.
   mkdir -p -- "$dir" || return 1
   tmp="$record.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   {
     printf 'id=%s\n' "$id"
     printf 'home=%s\n' "$home"
@@ -2984,10 +2999,12 @@ secondmate_retire_nested_note() {  # <child_home> <child_id> [lineage_prefix]
   fi
   fields=
   secondmate_retire_summary_dir_validate "$base/nested" || return 1
+  secondmate_retire_nested_prefix_validate "$base" "$prefix" || return 1
   secondmate_retire_summary_dir_validate "$dir" || return 1
   secondmate_retire_summary_dir_validate "$dir/reports" || return 1
   if mkdir -p -- "$dir/reports"; then
     secondmate_retire_summary_dir_validate "$base/nested" \
+      && secondmate_retire_nested_prefix_validate "$base" "$prefix" \
       && secondmate_retire_summary_dir_validate "$dir" \
       && secondmate_retire_summary_dir_validate "$dir/reports" \
       || return 1
@@ -3754,6 +3771,7 @@ remove_secondmate_registry_entry() {
     acquired=1
   fi
   tmp="$SECONDMATE_REG.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   grep -vE "^- $id( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv "$tmp" "$SECONDMATE_REG" || rc=$?
   [ "$acquired" -eq 0 ] || fm_lock_release "$lock"
