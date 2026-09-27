@@ -630,9 +630,9 @@ _signal_paths_from_payload() {  # <space-joined path list>
 }
 
 sync_pause_markers_from_signal() {  # <state> <signal files>
-  local state=$1 paths=$2 f last task win
+  local state=$1 payload=$2 f last task win
   local f_list
-  f_list=$(_signal_paths_from_payload "$paths")
+  f_list=$(_signal_paths_from_payload "$payload")
   while IFS= read -r f; do
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || continue
