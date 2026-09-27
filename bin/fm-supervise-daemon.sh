@@ -369,7 +369,23 @@ _collapse_newlines() {  # <text>
 
 classify_signal() {  # <reason-after-colon> <state>
   local reason=$1 state=$2 f last event record rest endpoint ident rc distilled="" rel="" seen_rel="" task sig marker
-  for f in $reason; do
+  # The reason carries a space-joined path list, so a home path containing a
+  # space arrives pre-split into fragments. Rejoin greedily: every watched path
+  # is absolute, so a token beginning with "/" always starts a new path.
+  # (A path with an embedded " /" would still mis-split; state and worktree
+  # roots never produce one.)
+  local paths=() partial="" tok i
+  for tok in $reason; do
+    case "$tok" in
+      /*)
+        [ -n "$partial" ] && paths+=("$partial")
+        partial=$tok ;;
+      *)
+        partial="$partial $tok" ;;
+    esac
+  done
+  [ -n "$partial" ] && paths+=("$partial")
+  for f in ${paths[@]+"${paths[@]}"}; do
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     task=$(basename "$f"); task="${task%.status}"
