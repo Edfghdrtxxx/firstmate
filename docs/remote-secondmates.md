@@ -648,7 +648,7 @@ It refuses while any of these holds:
 
 It closes only the retiring secondmate's panes or `2ndmate-<id>` workspace in `fm-remote`.
 It never stops the shared session or removes a sibling secondmate's workspace or panes.
-The remote pins its obligation record and the bounded retirement summary outside the home being removed and prints them through the control channel; the primary archives that printed summary at its own `data/<id>/retirement.md` and refuses the default path when this attempt printed none, or when `data/<id>` is not an ordinary directory, preserving the route for retry.
+The remote pins its obligation record and the bounded retirement summary outside the home being removed and prints them through the control channel; the primary archives that printed summary at its own `data/<id>/retirement.md` and refuses the default path when this attempt printed none, or when the archive directories it writes under `data/<id>` are not ordinary directories, preserving the route for retry.
 When the summary was stored but the remote home was not proved removed, the primary records `state/<id>.home-retire` with `phase=remote`; the next locked session start reports it as a `HOME_RETIRE:` line and never treats it as a local pool slot.
 SSH exit 255 preserves both the route and local records because completion is unknown.
 `--force` remains the explicit discard path and requires the same captain authority as local secondmate discard; it may also continue past a completed remote retire that produced no summary so a provably gone home is not stuck forever.

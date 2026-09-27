@@ -1012,6 +1012,7 @@ remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
   mkdir -p -- "$DATA/$ID" || return 1
   secondmate_retire_summary_dir_validate "$DATA/$ID" || return 1
   tmp="$summary.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   printf '%s\n' "$out" | awk '
     $0 == "FM_RETIRE_SUMMARY_BEGIN" { keep = 1; next }
     $0 == "FM_RETIRE_SUMMARY_END" { if (!keep) exit 1; saw = 1; exit }
@@ -2962,17 +2963,19 @@ SECONDMATE_RETIRE_REPORT_LINES=${SECONDMATE_RETIRE_REPORT_LINES:-400}
 secondmate_retire_nested_capture() {  # <src> <dst>
   local src=$1 dst=$2
   [ -f "$src" ] && [ ! -L "$src" ] || return 1
+  [ ! -L "$dst.tmp.$$" ] || rm -f -- "$dst.tmp.$$"
   head -n "$SECONDMATE_RETIRE_SECTION_LINES" "$src" > "$dst.tmp.$$" || { rm -f -- "$dst.tmp.$$"; return 1; }
   mv -f -- "$dst.tmp.$$" "$dst"
 }
 
 secondmate_retire_nested_note() {  # <child_home> <child_id> [lineage_prefix]
-  local home=$1 id=$2 prefix=${3:-} notes dir rel queued f child fields reports
+  local home=$1 id=$2 prefix=${3:-} notes base dir rel queued f child fields reports
   notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
   [ -n "$notes" ] || return 0
   [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 0
-  secondmate_retire_summary_dir_validate "${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID" || return 1
-  dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID/nested/$prefix$id"
+  base="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID"
+  secondmate_retire_summary_dir_validate "$base" || return 1
+  dir="$base/nested/$prefix$id"
   rel="nested/$prefix$id"
   queued=0
   if [ -f "$home/data/backlog.md" ] && [ ! -L "$home/data/backlog.md" ]; then
@@ -2980,7 +2983,14 @@ secondmate_retire_nested_note() {  # <child_home> <child_id> [lineage_prefix]
     [ -n "$queued" ] || queued=0
   fi
   fields=
+  secondmate_retire_summary_dir_validate "$base/nested" || return 1
+  secondmate_retire_summary_dir_validate "$dir" || return 1
+  secondmate_retire_summary_dir_validate "$dir/reports" || return 1
   if mkdir -p -- "$dir/reports"; then
+    secondmate_retire_summary_dir_validate "$base/nested" \
+      && secondmate_retire_summary_dir_validate "$dir" \
+      && secondmate_retire_summary_dir_validate "$dir/reports" \
+      || return 1
     secondmate_retire_nested_capture "$home/data/learnings.md" "$dir/learnings.md" \
       && fields=" learnings=$rel/learnings.md"
     secondmate_retire_nested_capture "$home/data/backlog.md" "$dir/backlog.md" \
@@ -3020,7 +3030,10 @@ secondmate_retire_report_links() {  # <home> <out_dir>
       continue
     fi
     dst="$out_dir/reports/$child.md"
-    if mkdir -p -- "$out_dir/reports" 2>/dev/null \
+    if secondmate_retire_summary_dir_validate "$out_dir/reports" \
+       && mkdir -p -- "$out_dir/reports" 2>/dev/null \
+       && secondmate_retire_summary_dir_validate "$out_dir/reports" \
+       && { [ ! -L "$dst.tmp.$$" ] || rm -f -- "$dst.tmp.$$"; } \
        && head -n "$SECONDMATE_RETIRE_REPORT_LINES" "$f" > "$dst.tmp.$$" 2>/dev/null; then
       lines=$(wc -l < "$f" | tr -d ' ')
       if [ "$lines" -gt "$SECONDMATE_RETIRE_REPORT_LINES" ]; then
@@ -3058,6 +3071,7 @@ write_secondmate_retirement_summary() {  # <home> <id>
     return 1
   fi
   tmp="$out.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
   backlog="$home/data/backlog.md"
   {
     printf '# Retirement summary: %s\n\n' "$id"
