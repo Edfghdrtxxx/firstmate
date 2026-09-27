@@ -2556,13 +2556,13 @@ test_max_defer_afk_inactive_does_not_flush_or_alarm() {
 # escalations.
 IDLE_NUDGE_CASES=0
 idle_nudge_case() {  # <flag> <step>... (tick <secs> | busy | idle | delivered)
-  local dir state step
+  local dir case_state step
   IDLE_NUDGE_CASES=$((IDLE_NUDGE_CASES + 1))
-  dir=$(make_supercase "idle-nudge-$IDLE_NUDGE_CASES"); state="$dir/state"
-  if [ -n "$1" ]; then printf '%s\n' "$1" > "$state/.afk"; fi
+  dir=$(make_supercase "idle-nudge-$IDLE_NUDGE_CASES"); case_state="$dir/state"
+  if [ -n "$1" ]; then printf '%s\n' "$1" > "$case_state/.afk"; fi
   shift
   (
-    FM_STATE_OVERRIDE="$state" . "$ROOT/bin/fm-wake-lib.sh"
+    FM_STATE_OVERRIDE="$case_state" . "$ROOT/bin/fm-wake-lib.sh"
     # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
     _now() { printf '%s\n' "$FAKE_NOW"; }
     # shellcheck disable=SC2329 # Invoked indirectly by the function under test.
@@ -2578,13 +2578,13 @@ idle_nudge_case() {  # <flag> <step>... (tick <secs> | busy | idle | delivered)
     while [ "$#" -gt 0 ]; do
       step=$1; shift
       case "$step" in
-        tick) FAKE_NOW=$((base + $1)); shift; housekeeping "$state" ;;
+        tick) FAKE_NOW=$((base + $1)); shift; housekeeping "$case_state" ;;
         busy|idle) FAKE_NATIVE=$step ;;
-        delivered) : > "$state/.subsuper-escalations" ;;
+        delivered) : > "$case_state/.subsuper-escalations" ;;
       esac
     done
   ) || fail "idle nudge case $IDLE_NUDGE_CASES failed"
-  IDLE_NUDGE_OUT=$(cat "$state/.subsuper-escalations" 2>/dev/null || true)
+  IDLE_NUDGE_OUT=$(cat "$case_state/.subsuper-escalations" 2>/dev/null || true)
 }
 
 test_away_idle_nudge_reminds_after_threshold_once() {
@@ -2902,7 +2902,7 @@ test_wedge_alarm_shutdown_stops_active_notifier_group() {
   (
     set -m
     sh -c 'sleep 30 & printf "%s" "$!" > "$1"; wait' sh "$child_file" &
-    pid=$!
+    pid=$(jobs -p)
     while [ ! -s "$child_file" ]; do sleep 0.05; done
     child=$(cat "$child_file")
     WEDGE_ALARM_NOTIFIER_PID=$pid
