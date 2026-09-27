@@ -994,11 +994,13 @@ remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
     tmp="$summary.tmp.$$"
     printf '%s\n' "$out" | awk '
       $0 == "FM_RETIRE_SUMMARY_BEGIN" { keep = 1; next }
-      $0 == "FM_RETIRE_SUMMARY_END" { keep = 0; exit }
+      $0 == "FM_RETIRE_SUMMARY_END" { if (!keep) exit 1; saw = 1; exit }
       keep { print }
+      END { if (!saw) exit 1 }
     ' > "$tmp" || { rm -f -- "$tmp"; return 1; }
     mv -f -- "$tmp" "$summary" || { rm -f -- "$tmp"; return 1; }
   fi
+  [ -s "$summary" ] && [ ! -L "$summary" ] || return 1
   [ "$fail" -ne 0 ] || return 0
   record="$STATE/$ID.home-retire"
   if [ -f "$record" ] && [ ! -L "$record" ]; then
@@ -1055,7 +1057,11 @@ remote_secondmate_teardown() {
   else
     if out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh retire "$ID" < /dev/null 2>&1); then rc=0; else rc=$?; fi
   fi
-  remote_retire_parent_store "$remote_host" "$remote_home" "$out" "$rc" || true
+  if ! remote_retire_parent_store "$remote_host" "$remote_home" "$out" "$rc"; then
+    echo "error: could not record a parent-visible retirement summary for $ID; preserving the route for retry" >&2
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    return 1
+  fi
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     if [ "$rc" -eq 255 ]; then
@@ -2916,19 +2922,35 @@ secondmate_retire_open_holds() {  # <backlog>
 # reports/<child>.md and the emitted path names that archive.
 SECONDMATE_RETIRE_REPORT_LINES=${SECONDMATE_RETIRE_REPORT_LINES:-400}
 
+secondmate_retire_nested_capture() {  # <src> <dst>
+  local src=$1 dst=$2
+  [ -f "$src" ] && [ ! -L "$src" ] || return 1
+  head -n "$SECONDMATE_RETIRE_SECTION_LINES" "$src" > "$dst.tmp.$$" || { rm -f -- "$dst.tmp.$$"; return 1; }
+  mv -f -- "$dst.tmp.$$" "$dst"
+}
+
 secondmate_retire_nested_note() {  # <child_home> <child_id>
-  local home=$1 id=$2 notes queued learnings
+  local home=$1 id=$2 notes dir rel queued f child
   notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
   [ -n "$notes" ] || return 0
+  [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 0
+  dir="$DATA/$ID/nested/$id"
+  mkdir -p -- "$dir/reports" || return 0
+  rel="nested/$id"
   queued=0
-  if [ -f "$home/data/backlog.md" ] && [ ! -L "$home/data/backlog.md" ]; then
-    queued=$(grep -c '^- \[ \]' "$home/data/backlog.md" 2>/dev/null || true)
+  secondmate_retire_nested_capture "$home/data/learnings.md" "$dir/learnings.md" || true
+  if secondmate_retire_nested_capture "$home/data/backlog.md" "$dir/backlog.md"; then
+    queued=$(grep -c '^- \[ \]' "$dir/backlog.md" 2>/dev/null || true)
   fi
-  learnings=no
-  if [ -f "$home/data/learnings.md" ] && [ ! -L "$home/data/learnings.md" ]; then
-    learnings=yes
-  fi
-  printf '%s home=%s queued=%s learnings=%s\n' "$id" "$home" "$queued" "$learnings" >> "$notes"
+  for f in "$home"/data/*/report.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    child=${f##*/data/}
+    child=${child%/report.md}
+    [ -d "$home/data/$child" ] && [ ! -L "$home/data/$child" ] || continue
+    secondmate_retire_nested_capture "$f" "$dir/reports/$child.md" || true
+  done
+  printf '%s queued=%s learnings=%s/learnings.md backlog=%s/backlog.md reports=%s/reports\n' \
+    "$id" "$queued" "$rel" "$rel" "$rel" >> "$notes"
 }
 
 secondmate_retire_report_tree_is_plain() {  # <home> <child>
