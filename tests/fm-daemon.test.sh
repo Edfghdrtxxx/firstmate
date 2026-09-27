@@ -148,7 +148,7 @@ test_classify_signal_skips_turn_end_markers() {
 # state root under a directory with a space in its name through a signal row
 # and the needs-decision variant.
 test_classify_signal_rejoins_spaced_paths() {
-  local dir state turn out
+  local dir state turn key out
   dir=$(make_supercase "spaced home/daemon-classify"); state="$dir/state"
   turn="$state/task.turn-ended"; : > "$turn"
   printf 'blocked: away captain must decide\nworking: still typing\n' > "$state/task.status"
@@ -172,7 +172,17 @@ test_classify_signal_rejoins_spaced_paths() {
   case "$out" in *"needs-decision [key=k1]: pick one"*) ;;
     *) fail "the needs-decision reason under a spaced home path was silently self-handled" ;;
   esac
-  pass "spaced home paths are rejoined for signal and needs-decision payloads"
+
+  # sync_pause_markers_from_signal consumed the same space-joined payload with
+  # read -a: under a spaced home it saw only dead fragments and a paused: line
+  # never recorded its pause marker.
+  printf 'window=test:fm-paused1\nkind=ship\n' > "$state/paused1.meta"
+  printf 'working: prepping\npaused: waiting on the captain\n' > "$state/paused1.status"
+  key=$(printf '%s' paused1 | tr ':/.' '___')
+  sync_pause_markers_from_signal "$state" "$state/paused1.status"
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "a paused: signal under a spaced home path did not record its pause marker"
+  pass "spaced home paths are rejoined for signal, needs-decision, and pause-sync payloads"
 }
 
 test_classify_signal_survives_a_later_routine_append() {

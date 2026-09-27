@@ -369,23 +369,9 @@ _collapse_newlines() {  # <text>
 
 classify_signal() {  # <reason-after-colon> <state>
   local reason=$1 state=$2 f last event record rest endpoint ident rc distilled="" rel="" seen_rel="" task sig marker
-  # The reason carries a space-joined path list, so a home path containing a
-  # space arrives pre-split into fragments. Rejoin greedily: every watched path
-  # is absolute, so a token beginning with "/" always starts a new path.
-  # (A path with an embedded " /" would still mis-split; state and worktree
-  # roots never produce one.)
-  local paths=() partial="" tok i
-  for tok in $reason; do
-    case "$tok" in
-      /*)
-        [ -n "$partial" ] && paths+=("$partial")
-        partial=$tok ;;
-      *)
-        partial="$partial $tok" ;;
-    esac
-  done
-  [ -n "$partial" ] && paths+=("$partial")
-  for f in ${paths[@]+"${paths[@]}"}; do
+  local f_list
+  f_list=$(_signal_paths_from_payload "$reason")
+  while IFS= read -r f; do
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     task=$(basename "$f"); task="${task%.status}"
@@ -421,7 +407,9 @@ classify_signal() {  # <reason-after-colon> <state>
     # of something already escalated, not a routine one; position is the whole
     # dedupe, so no separate seen-marker comparison is needed.
     status_is_captain_relevant "$last" && seen_rel=1
-  done
+  done <<EOF
+$f_list
+EOF
   # strip a trailing " | " separator so the distilled line is clean
   distilled="${distilled% | }"
   if [ -n "$rel" ]; then
@@ -617,12 +605,35 @@ migrate_watcher_pause_markers() {  # <state>
     fi
   done
 }
+# The wake reason and queued payload both carry the signal file list
+# space-joined (bin/fm-watch.sh), so under a home whose path contains a space
+# the list arrives pre-split into fragments. Rejoin greedily: every watched
+# path is absolute, so a token beginning with "/" always starts a new path.
+# (A path with an embedded " /" would still mis-split; state and worktree
+# roots never produce one.) Prints one path per line; pipeline consumers must
+# not assign caller-visible state inside the consuming loop's subshell - read
+# the list into a variable first and iterate it with a heredoc.
+_signal_paths_from_payload() {  # <space-joined path list>
+  local list=$1 paths=() partial="" tok
+  for tok in $list; do
+    case "$tok" in
+      /*)
+        [ -n "$partial" ] && paths+=("$partial")
+        partial=$tok ;;
+      *)
+        partial="$partial $tok" ;;
+    esac
+  done
+  [ -n "$partial" ] && paths+=("$partial")
+  local i
+  for i in ${paths[@]+"${paths[@]}"}; do printf '%s\n' "$i"; done
+}
 
 sync_pause_markers_from_signal() {  # <state> <signal files>
   local state=$1 paths=$2 f last task win
-  local -a files
-  read -r -a files <<<"$paths"
-  for f in "${files[@]}"; do
+  local f_list
+  f_list=$(_signal_paths_from_payload "$paths")
+  while IFS= read -r f; do
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || continue
     last=$(status_declared_wait_line "$f")
@@ -630,7 +641,9 @@ sync_pause_markers_from_signal() {  # <state> <signal files>
     win=$(window_for_task "$task" "$state" 2>/dev/null || true)
     [ -n "$win" ] || continue
     reconcile_pause_tracking "$win" "$state" "$last"
-  done
+  done <<EOF
+$f_list
+EOF
 }
 
 _seen_status_path() {  # <state> <task>
