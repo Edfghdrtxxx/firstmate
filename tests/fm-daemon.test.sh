@@ -141,6 +141,50 @@ test_classify_signal_skips_turn_end_markers() {
   pass "turn-end markers stay routine while mixed actionable status batches escalate"
 }
 
+# The wake payload joins signal paths on spaces, so under a home whose path
+# contains a space classify_signal used to see only dead fragments: a
+# captain-relevant line was classified as a routine signal and swallowed. The
+# consumer fix rejoins tokens on absolute-path boundaries; this case drives a
+# state root under a directory with a space in its name through a signal row
+# and the needs-decision variant.
+test_classify_signal_rejoins_spaced_paths() {
+  local dir state turn key out
+  dir=$(make_supercase "spaced home/daemon-classify"); state="$dir/state"
+  turn="$state/task.turn-ended"; : > "$turn"
+  printf 'blocked: away captain must decide\nworking: still typing\n' > "$state/task.status"
+  printf 'needs-decision [key=k1]: pick one\nworking: notes\n' > "$state/task2.status"
+
+  out=$(classify_signal "$turn $state/task.status" "$state")
+  case "$out" in escalate\|*"blocked: away captain must decide"*) ;;
+    *) fail "an actionable signal under a spaced home path was not escalated: $out" ;;
+  esac
+
+  out=$(classify_signal "$state/task2.status" "$state")
+  case "$out" in escalate\|*"needs-decision [key=k1]: pick one"*) ;;
+    *) fail "a needs-decision payload under a spaced home path was not escalated: $out" ;;
+  esac
+
+  (
+    FM_ESCALATE_BATCH_SECS=999 \
+      handle_wake "needs-decision: $state/task2.status" "$state"
+  )
+  out=$(cat "$state/.subsuper-escalations" 2>/dev/null || true)
+  case "$out" in *"needs-decision [key=k1]: pick one"*) ;;
+    *) fail "the needs-decision reason under a spaced home path was silently self-handled" ;;
+  esac
+
+  # sync_pause_markers_from_signal consumed the same space-joined payload with
+  # read -a: under a spaced home it saw only dead fragments and a paused: line
+  # never recorded its pause marker.
+  printf 'window=test:fm-paused1\nkind=ship\n' > "$state/paused1.meta"
+  printf 'working: prepping\npaused: waiting on the captain\n' > "$state/paused1.status"
+  key=$(printf '%s' paused1 | tr ':/.' '___')
+  sync_pause_markers_from_signal "$state" "$state/paused1.status"
+  [ -e "$state/.subsuper-paused-$key" ] \
+    || fail "a paused: signal under a spaced home path did not record its pause marker"
+  pass "spaced home paths are rejoined for signal, needs-decision, and pause-sync payloads"
+}
+
 test_classify_signal_survives_a_later_routine_append() {
   local dir state out
   dir=$(make_supercase classify-masked)
@@ -3181,6 +3225,7 @@ test_tmux_composer_state_requires_matching_box_borders
 test_pane_input_pending_preserves_bright_placeholder_like_draft
 test_classify_signal_dedup_against_scan
 test_classify_signal_skips_turn_end_markers
+test_classify_signal_rejoins_spaced_paths
 test_classify_signal_survives_a_later_routine_append
 test_classification_commits_its_captured_endpoint
 test_stale_masked_event_escalates_at_captured_endpoint
