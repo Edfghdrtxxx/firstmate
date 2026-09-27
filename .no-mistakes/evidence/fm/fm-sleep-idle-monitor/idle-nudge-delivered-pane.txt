@@ -1,0 +1,84 @@
+ 2026-09-27 20:44:37  Δ 16.7s  in: 271  out: 261  cache 22K  t: 11.9s  tok/s:
+ 21.9/s
+
+
+ ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): reminder:
+ captain believes you, you must be justified when you stop. Check it out.
+ (pre-read; re-arm not needed — watcher daemon-managed)
+
+
+ One more lead before settling: state/.last-check is empty and this is a check:
+ event — the resurface may wait for the worker to stamp it. Checking who
+ reads/writes it.
+
+ 2026-09-27 20:44:49  Δ 11.7s  in: 253  out: 328  cache 22K  t: 9.5s  tok/s:
+ 29.6/s
+
+ .last-check is watcher-written only — not mine. Finding what consumes
+ .subsuper-escalations to see if an ack path exists for the worker.
+
+ 2026-09-27 20:45:00  Δ 20.8s  in: 776  out: 276  cache 22K  t: 7.5s  tok/s:
+ 31.1/s
+
+
+ ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): reminder:
+ captain believes you, you must be justified when you stop. Check it out.
+ (pre-read; re-arm not needed — watcher daemon-managed)
+
+
+ Ping #14 — grep for the consumer running in bg_3. Holding.
+
+ 2026-09-27 20:45:09  Δ 10.8s  in: 488  out: 42  cache 23K  t: 6.6s  tok/s:
+ 6.4/s
+
+ Resolved the loop's origin — .subsuper-escalations is the daemon's distilled
+ escalation buffer. It flushes only on fm-afk-return/fm-afk-start (captain
+ activity), and .afk is set, so it re-injects each idle tick by design. No
+ worker-side ack exists; "pre-read" is the whole contract and it's satisfied.
+
+ Conclusion stands: watcher beating, marker acked:handling, buffer awaits
+ captain return. Stopped is the correct, justified state.
+
+ 2026-09-27 20:45:16  Δ 22.0s  in: 1.5K  out: 284  cache 24K  t: 9.1s  tok/s:
+ 25.4/s
+
+
+ ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): reminder:
+ captain believes you, you must be justified when you stop. Check it out.
+ (pre-read; re-arm not needed — watcher daemon-managed)
+
+
+ Same buffered reminder, .afk still set — this is the designed away-mode
+ cadence, not a new event. Verified: watcher alive, marker acked, no worker
+ action contract. Stopped.
+
+ 2026-09-27 20:45:27  Δ 9.2s  in: 301  out: 112  cache 25K  t: 4.0s  tok/s:
+ 23.3/s
+
+
+ ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): reminder:
+ captain believes you, you must be justified when you stop. Check it out.
+ (pre-read; re-arm not needed — watcher daemon-managed)
+
+
+ Design confirmed: buffer flushes only on captain return (fm-afk-return); .afk
+ set ⇒ re-inject each tick. Pre-read satisfied, marker acked. Stopped.
+
+ 2026-09-27 20:45:40  Δ 7.3s  in: 185  out: 93  cache 26K  t: 6.6s  tok/s:
+ 12.8/s
+
+
+ ⁣FIRSTMATE_OP: v1 away-supervisor: Supervisor escalate (1 event(s)): reminder:
+ captain believes you, you must be justified when you stop. Check it out.
+ (pre-read; re-arm not needed — watcher daemon-managed)
+
+
+  Esc Working…
+
+--------------------------------------------------------------------------------
+❯
+--------------------------------------------------------------------------------
+ [SWE-2 (High)] │ fm-lab.RumRGs | Tool output expansion: disabled
+ Context █░░░░░░░░░ 10% (25,741/262,000) (session in: 23.9k, out: 6.1k, cache:
+ 415.7k (95%))
+ \ 3s · [T] fm-lab.RumRGs · ctx: 9.8%/262K [A] · S0.07
