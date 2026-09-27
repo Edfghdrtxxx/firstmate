@@ -1,0 +1,4 @@
+wait_for_exit: owned pid 20748 exceeded 100 polls; sending TERM
+20748 20695 S    bash /Users/leyi/.no-mistakes/worktrees/eb15410c16eb/01M3F67HVKFRNM3PMEHQFYFT36/bin/fm-watch.sh
+not ok - a captain-relevant signal under a spaced path was absorbed by a working crew: 
+rc=1

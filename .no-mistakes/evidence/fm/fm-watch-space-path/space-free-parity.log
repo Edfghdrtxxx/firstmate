@@ -1,0 +1,3 @@
+ok - captain-relevant signal is surfaced (queue + exit) and marked surfaced
+ok - a no-verb signal whose crew is provably working is absorbed (no exit, no queue, suppressor advanced, beacon present)
+ok - a bare turn-end from a pane that churned since the previous poll is absorbed
