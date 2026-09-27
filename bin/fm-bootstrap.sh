@@ -16,6 +16,7 @@
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
 #                 "BACKLOG_RECONCILE: code-root <file> is not this home's <file>; ...",
+#                 "HOME_RETIRE: <id>: <why a recorded retired-home removal could not be reconciled>",
 #                 "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
@@ -101,8 +102,15 @@
 #          The `code-root <file>` variant is a detect-only local check that runs
 #          even in a read-only session; detect_code_root_backlog_fork owns what
 #          it reports.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
-#          (backlog_record_reconcile, secondmate_sync,
+#          HOME_RETIRE lines report what retired_home_reconcile could not
+#          reconcile: a surviving state/<id>.home-retire obligation means a
+#          teardown or seed rollback released the lease but could not prove
+#          the returned directory removed. The sweep re-returns only the
+#          recorded lease holder, retries `treehouse destroy`, drops records
+#          that provably need no action, and reports phase=remote records
+#          without touching them because that home is on another host.
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the seven MUTATING sweeps
+#          (backlog_record_reconcile, retired_home_reconcile, secondmate_sync,
 #          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
 #          fleet_sync) while still
 #          printing every read-only detect line
@@ -112,7 +120,7 @@
 #          the fleet lock, so a second concurrent session never race-mutates
 #          secondmate homes, pending handoff outboxes and receiver wakes,
 #          X-mode artifacts, project clones, or repair instructions.
-#          Unset/0 (the default) runs all six sweeps - this flag is purely
+#          Unset/0 (the default) runs all seven sweeps - this flag is purely
 #          additive.
 #          Set FM_BOOTSTRAP_NETWORK to split this run by whether a step talks to
 #          the network, so a session start can print its digest from local reads

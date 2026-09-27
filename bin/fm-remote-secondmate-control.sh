@@ -37,6 +37,12 @@
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's panes or workspace and never
 # stops fm-remote or removes a sibling secondmate's workspace or panes.
+# Retirement also redirects STATE/DATA into the home being removed, so it
+# pins its obligation record and bounded summary into a temp dir and prints
+# them back to the calling parent as FM_RETIRE_SUMMARY_BEGIN/END and
+# FM_RETIRE_RECORD_BEGIN/END blocks; the parent owns storing and sweeping.
+# A retire whose home is already gone prints `already-retired: <id>` and
+# exits 0 before the sourced libraries can recreate that home's state dir.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
