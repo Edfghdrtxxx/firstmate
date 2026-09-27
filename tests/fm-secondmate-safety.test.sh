@@ -2197,6 +2197,127 @@ EOF
   pass "force teardown sweeps nested secondmate homes before deletion"
 }
 
+test_secondmate_force_teardown_nested_note_names_only_surviving_paths() {
+  local home subhome childhome leafhome fakebin log summary i
+  home="$TMP_ROOT/nested-note-home"
+  subhome="$TMP_ROOT/nested-note-subhome"
+  childhome="$TMP_ROOT/nested-note-childhome"
+  leafhome="$TMP_ROOT/nested-note-leafhome"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" \
+    "$childhome/state" "$childhome/data/rpt" "$leafhome/state" "$leafhome/data"
+  mark_firstmate_home "$subhome"
+  mark_firstmate_home "$childhome"
+  mark_firstmate_home "$leafhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$childhome/.fm-secondmate-home"
+  printf 'leaf\n' > "$leafhome/.fm-secondmate-home"
+  {
+    printf '# Backlog\n\n## Queued\n'
+    i=0
+    while [ "$i" -lt 70 ]; do
+      printf -- '- [ ] nested-item-%s - queued work (repo: beta)\n' "$i"
+      i=$((i + 1))
+    done
+  } > "$childhome/data/backlog.md"
+  printf 'nested learning\n' > "$childhome/data/learnings.md"
+  printf 'nested report\n' > "$childhome/data/rpt/report.md"
+  printf 'leaf learning\n' > "$leafhome/data/learnings.md"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$childhome"
+  fm_write_secondmate_meta "$subhome/state/leaf.meta" "$leafhome"
+  cat > "$home/data/secondmates.md" <<EOF
+- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)
+- nested - nested domain (home: $childhome; scope: nested domain; projects: beta; added 2026-06-22)
+- leaf - leaf domain (home: $leafhome; scope: leaf domain; projects: gamma; added 2026-06-22)
+EOF
+  fakebin=$(make_fake_tmux "$TMP_ROOT/nested-note-fake")
+  log="$TMP_ROOT/nested-note-fake/tmux.log"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/nested-note-fake/pane.txt" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "force teardown with nested state failed"
+  [ ! -d "$childhome" ] || fail "force teardown retained the nested child home"
+  [ ! -d "$leafhome" ] || fail "force teardown retained the leaf child home"
+  summary="$home/data/domain/retirement.md"
+  [ -f "$summary" ] || fail "force teardown did not write the retirement summary"
+  grep -Fx 'nested queued=70 learnings=nested/nested/learnings.md backlog=nested/nested/backlog.md reports=nested/nested/reports' \
+    "$summary" >/dev/null \
+    || fail "nested note did not count the source backlog or name every surviving capture"
+  grep -Fx 'leaf queued=0 learnings=nested/leaf/learnings.md' "$summary" >/dev/null \
+    || fail "nested note named capture paths that do not exist for an empty child"
+  [ -f "$home/data/domain/nested/nested/learnings.md" ] || fail "teardown did not archive the nested learnings"
+  [ -f "$home/data/domain/nested/nested/backlog.md" ] || fail "teardown did not archive the nested backlog"
+  [ -f "$home/data/domain/nested/nested/reports/rpt.md" ] || fail "teardown did not archive the nested report"
+  [ -f "$home/data/domain/nested/leaf/learnings.md" ] || fail "teardown did not archive the leaf learnings"
+  grep -F 'nested learning' "$home/data/domain/nested/nested/learnings.md" >/dev/null \
+    || fail "archived nested learnings lost their content"
+  pass "force teardown names only surviving nested capture paths"
+}
+
+test_secondmate_teardown_pinned_nested_note_omits_file_paths() {
+  local home subhome childhome fmroot fakebin log lease control_state control_data summary
+  home="$TMP_ROOT/nested-pin-home"
+  subhome="$TMP_ROOT/nested-pin-subhome"
+  childhome="$TMP_ROOT/nested-pin-childhome"
+  fmroot="$TMP_ROOT/nested-pin-fmroot"
+  control_state="$subhome/state/parent-route"
+  control_data="$subhome/data/.parent-route"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$control_state" "$control_data" \
+    "$subhome/data" "$childhome/state" "$childhome/data"
+  mark_firstmate_home "$childhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$childhome/.fm-secondmate-home"
+  printf 'pinned nested learning\n' > "$childhome/data/learnings.md"
+  cat > "$subhome/data/backlog.md" <<'EOF'
+# Backlog
+
+## Queued
+- [ ] task-queued - waiting work (repo: alpha)
+EOF
+  cat > "$control_state/domain.meta" <<EOF
+window=firstmate:fm-domain
+worktree=$subhome
+project=$subhome
+harness=echo
+kind=secondmate
+mode=secondmate
+yolo=off
+home=$subhome
+projects=alpha
+EOF
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$childhome"
+  cat > "$control_data/secondmates.md" <<EOF
+- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)
+- nested - nested domain (home: $childhome; scope: nested domain; projects: beta; added 2026-06-22)
+EOF
+  fakebin=$(make_fake_tmux "$TMP_ROOT/nested-pin-fake")
+  log="$TMP_ROOT/nested-pin-fake/tmux.log"
+  lease="$TMP_ROOT/nested-pin-fake/lease"
+  printf 'domain\n' > "$lease"
+
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/nested-pin-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
+    FM_STATE_OVERRIDE="$control_state" FM_DATA_OVERRIDE="$control_data" \
+    FM_RETIRE_STATE_DIR="$home/retire-state" FM_RETIRE_SUMMARY_DIR="$home/retire-data" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "pinned force teardown with nested state failed"
+  summary="$home/retire-data/domain/retirement.md"
+  [ -f "$summary" ] || fail "pinned teardown did not write the retirement summary"
+  grep -Fx 'nested queued=0' "$summary" >/dev/null \
+    || fail "pinned nested note dropped the queued count"
+  grep -F 'nested/' "$summary" >/dev/null \
+    && fail "pinned nested note named capture paths the remote transport does not carry"
+  [ -f "$home/retire-data/domain/nested/nested/learnings.md" ] \
+    || fail "pinned teardown did not write the nested capture under the summary root"
+  [ ! -e "$control_data/domain/nested" ] \
+    || fail "pinned teardown left the nested capture inside the removed home"
+  pass "pinned teardown keeps the nested count without naming untransported paths"
+}
+
 test_secondmate_force_teardown_preserves_nested_restore_status() {
   local home subhome childhome grandchildhome fmroot fakebin log sweep_log rearm_log err rc backup
   home="$TMP_ROOT/procevent-nested-fail-home"
@@ -3478,6 +3599,8 @@ test_secondmate_teardown_sweeps_process_events_before_removal
 test_secondmate_teardown_refuses_process_events_without_sweep_script
 test_secondmate_teardown_preserves_process_events_on_later_refusal
 test_secondmate_force_teardown_sweeps_nested_homes
+test_secondmate_force_teardown_nested_note_names_only_surviving_paths
+test_secondmate_teardown_pinned_nested_note_omits_file_paths
 test_secondmate_force_teardown_preserves_nested_restore_status
 test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return

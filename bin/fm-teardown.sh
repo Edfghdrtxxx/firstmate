@@ -2937,27 +2937,37 @@ secondmate_retire_nested_capture() {  # <src> <dst>
 }
 
 secondmate_retire_nested_note() {  # <child_home> <child_id>
-  local home=$1 id=$2 notes dir rel queued f child
+  local home=$1 id=$2 notes dir rel queued f child fields reports
   notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
   [ -n "$notes" ] || return 0
   [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 0
-  dir="$DATA/$ID/nested/$id"
-  mkdir -p -- "$dir/reports" || return 0
+  dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID/nested/$id"
   rel="nested/$id"
   queued=0
-  secondmate_retire_nested_capture "$home/data/learnings.md" "$dir/learnings.md" || true
-  if secondmate_retire_nested_capture "$home/data/backlog.md" "$dir/backlog.md"; then
-    queued=$(grep -c '^- \[ \]' "$dir/backlog.md" 2>/dev/null || true)
+  if [ -f "$home/data/backlog.md" ] && [ ! -L "$home/data/backlog.md" ]; then
+    queued=$(grep -c '^- \[ \]' "$home/data/backlog.md" 2>/dev/null || true)
+    [ -n "$queued" ] || queued=0
   fi
-  for f in "$home"/data/*/report.md; do
-    [ -f "$f" ] && [ ! -L "$f" ] || continue
-    child=${f##*/data/}
-    child=${child%/report.md}
-    [ -d "$home/data/$child" ] && [ ! -L "$home/data/$child" ] || continue
-    secondmate_retire_nested_capture "$f" "$dir/reports/$child.md" || true
-  done
-  printf '%s queued=%s learnings=%s/learnings.md backlog=%s/backlog.md reports=%s/reports\n' \
-    "$id" "$queued" "$rel" "$rel" "$rel" >> "$notes"
+  fields=
+  if mkdir -p -- "$dir/reports"; then
+    secondmate_retire_nested_capture "$home/data/learnings.md" "$dir/learnings.md" \
+      && fields=" learnings=$rel/learnings.md"
+    secondmate_retire_nested_capture "$home/data/backlog.md" "$dir/backlog.md" \
+      && fields="$fields backlog=$rel/backlog.md"
+    reports=0
+    for f in "$home"/data/*/report.md; do
+      [ -f "$f" ] && [ ! -L "$f" ] || continue
+      child=${f##*/data/}
+      child=${child%/report.md}
+      [ -d "$home/data/$child" ] && [ ! -L "$home/data/$child" ] || continue
+      if secondmate_retire_nested_capture "$f" "$dir/reports/$child.md"; then
+        reports=1
+      fi
+    done
+    [ "$reports" -eq 0 ] || fields="$fields reports=$rel/reports"
+  fi
+  [ -z "${FM_RETIRE_SUMMARY_DIR:-}" ] || fields=
+  printf '%s queued=%s%s\n' "$id" "$queued" "$fields" >> "$notes"
 }
 
 secondmate_retire_report_tree_is_plain() {  # <home> <child>
