@@ -68,6 +68,9 @@ When any diagnostic needs captain attention, report the plain consequence and re
   After the directory is actually gone and the lease is released, remove `state/<id>.home-retire`.
 - `HOME_RETIRE: <id>: treehouse is unavailable; ...` - same obligation, but the sweep could not retry because treehouse is not on PATH.
   Install or expose treehouse and rerun session start, or handle the named path by hand.
+- `HOME_RETIRE: <id>: remote home <path> was not proved removed; ...` - a remote retirement could not prove the home on its configured host was removed, so the parent recorded `phase=remote` in `state/<id>.home-retire`.
+  The named `home=` is a remote path; never touch any local path under it, and the sweep deliberately does not retry because the slot is not local.
+  Reconcile it through the remote route (re-run retirement or inspect on that host), then remove the record once removal is proved.
 - `HOME_RETIRE: unsafe retirement record refused: <reason>` / `HOME_RETIRE: <record> is incomplete` - the `state/<id>.home-retire` record itself failed validation.
   Inspect the named record and its `home=` path before doing anything; fix or remove the record only after confirming what the path actually is.
 - `BACKLOG_RECONCILE: <id>: worker record exists but its backlog item could not be read: <reason>` - this home could not determine whether the item matches its worker record.
