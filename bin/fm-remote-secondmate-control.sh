@@ -61,6 +61,25 @@ CONTROL_STATE="$TARGET_HOME/state/parent-route"
 CONTROL_DATA="$TARGET_HOME/data/.parent-route"
 REMOTE_HERDR_SESSION=fm-remote
 
+# A retire of a home that is already gone has to be decided before the
+# libraries below are sourced. Those libraries create $FM_HOME/state while
+# loading, which would recreate this home and make the absence look like an
+# unsafe empty directory. The parent then cannot finish with --force.
+if [ "${1:-}" = retire ] && [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
+  case "${2:-}" in
+    ''|*[!A-Za-z0-9._-]*)
+      printf 'error: invalid secondmate id: %s\n' "${2:-}" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$#" -gt 3 ] || { [ "$#" -eq 3 ] && [ "$3" != --force ]; }; then
+    printf 'error: invalid retire arguments\n' >&2
+    exit 2
+  fi
+  printf 'already-retired: %s\n' "$2"
+  exit 0
+fi
+
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-ff-lib.sh

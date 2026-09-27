@@ -986,20 +986,39 @@ remote_outbox_cleanup() {
   )
 }
 
+# Retirement archives land only in an ordinary data/<id> directory. A symlink
+# or any other existing non-directory is refused before the summary or its
+# captured reports are written, so the archive cannot follow a link out of
+# the parent home. A path that does not exist yet may be created afterwards.
+secondmate_retire_summary_dir_validate() {  # <summary-dir>
+  local dir=$1
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    if [ ! -d "$dir" ] || [ -L "$dir" ]; then
+      echo "REFUSED: retirement summary directory is unsafe: $dir" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
 remote_retire_parent_store() {  # <host> <remote_home> <remote_output> <rc>
   local host=$1 remote_home=$2 out=$3 fail=$4 record tmp summary body
   summary="$DATA/$ID/retirement.md"
-  if printf '%s\n' "$out" | grep -q '^FM_RETIRE_SUMMARY_BEGIN$'; then
-    mkdir -p -- "$DATA/$ID" || return 1
-    tmp="$summary.tmp.$$"
-    printf '%s\n' "$out" | awk '
-      $0 == "FM_RETIRE_SUMMARY_BEGIN" { keep = 1; next }
-      $0 == "FM_RETIRE_SUMMARY_END" { if (!keep) exit 1; saw = 1; exit }
-      keep { print }
-      END { if (!saw) exit 1 }
-    ' > "$tmp" || { rm -f -- "$tmp"; return 1; }
-    mv -f -- "$tmp" "$summary" || { rm -f -- "$tmp"; return 1; }
-  fi
+  # Only a summary block printed by this remote retire counts. A retirement.md
+  # left by an earlier retire of the same id is not evidence. The caller may
+  # continue under --force only when this attempt printed no summary at all.
+  printf '%s\n' "$out" | grep -q '^FM_RETIRE_SUMMARY_BEGIN$' || return 1
+  secondmate_retire_summary_dir_validate "$DATA/$ID" || return 1
+  mkdir -p -- "$DATA/$ID" || return 1
+  secondmate_retire_summary_dir_validate "$DATA/$ID" || return 1
+  tmp="$summary.tmp.$$"
+  printf '%s\n' "$out" | awk '
+    $0 == "FM_RETIRE_SUMMARY_BEGIN" { keep = 1; next }
+    $0 == "FM_RETIRE_SUMMARY_END" { if (!keep) exit 1; saw = 1; exit }
+    keep { print }
+    END { if (!saw) exit 1 }
+  ' > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$summary" || { rm -f -- "$tmp"; return 1; }
   [ -s "$summary" ] && [ ! -L "$summary" ] || return 1
   [ "$fail" -ne 0 ] || return 0
   record="$STATE/$ID.home-retire"
@@ -1056,6 +1075,17 @@ remote_secondmate_teardown() {
     if out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh retire "$ID" --force < /dev/null 2>&1); then rc=0; else rc=$?; fi
   else
     if out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh retire "$ID" < /dev/null 2>&1); then rc=0; else rc=$?; fi
+  fi
+  # A summary from this attempt is stored only in an ordinary directory.
+  # --force may finish a retire that printed no summary; it does not bypass
+  # an unsafe archive directory, so the route stays until that directory is
+  # ordinary.
+  if printf '%s\n' "$out" | grep -q '^FM_RETIRE_SUMMARY_BEGIN$'; then
+    if ! secondmate_retire_summary_dir_validate "$DATA/$ID"; then
+      echo "error: could not record a parent-visible retirement summary for $ID; preserving the route for retry" >&2
+      [ -z "$out" ] || printf '%s\n' "$out" >&2
+      return 1
+    fi
   fi
   if ! remote_retire_parent_store "$remote_host" "$remote_home" "$out" "$rc"; then
     # --force is the same discard authority used for unlanded work. It may
@@ -2941,6 +2971,7 @@ secondmate_retire_nested_note() {  # <child_home> <child_id> [lineage_prefix]
   notes=${SECONDMATE_NESTED_RETIRE_NOTES:-}
   [ -n "$notes" ] || return 0
   [ -d "$home/data" ] && [ ! -L "$home/data" ] || return 0
+  secondmate_retire_summary_dir_validate "${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID" || return 1
   dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$ID/nested/$prefix$id"
   rel="nested/$prefix$id"
   queued=0
@@ -3020,7 +3051,9 @@ write_secondmate_retirement_summary() {  # <home> <id>
   # parent home so the summary is not deleted with the mate.
   out_dir="${FM_RETIRE_SUMMARY_DIR:-$DATA}/$id"
   out="$out_dir/retirement.md"
+  secondmate_retire_summary_dir_validate "$out_dir" || return 1
   mkdir -p -- "$out_dir" || return 1
+  secondmate_retire_summary_dir_validate "$out_dir" || return 1
   if ! report_links=$(secondmate_retire_report_links "$home" "$out_dir"); then
     return 1
   fi
@@ -3632,7 +3665,7 @@ cleanup_firstmate_home_children() {  # <home> [lineage_prefix]
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
         cleanup_firstmate_home_children "$child_home" "$prefix$child_id/" || return $?
-        secondmate_retire_nested_note "$child_home" "$child_id" "$prefix"
+        secondmate_retire_nested_note "$child_home" "$child_id" "$prefix" || return 1
         remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return $?
       fi
     elif [ "$child_backend" = orca ]; then

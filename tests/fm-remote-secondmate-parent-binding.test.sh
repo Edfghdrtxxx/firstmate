@@ -311,6 +311,7 @@ pass "a remote secondmate's own committed relay token still refuses cleanup"
 FOREIGN_META="$TMP_ROOT/foreign-ios.meta"
 LOCAL_META="$PARENT/state/ios.meta"
 printf 'foreign sentinel\n' > "$FOREIGN_META"
+cp "$LOCAL_META" "$TMP_ROOT/ios-meta-before-publication"
 rm -f "$LOCAL_META"
 PUBLICATION_RC=0
 PUBLICATION_OUT=$(FM_TEST_PUBLICATION_TARGET="$LOCAL_META" \
@@ -325,5 +326,74 @@ cmp -s "$FOREIGN_META" <(printf 'foreign sentinel\n') \
 [ -L "$LOCAL_META" ] \
   || fail "remote secondmate publication replaced the refused target boundary"
 pass "remote secondmate publication refuses targets outside its home"
+
+# The parent-side retirement archive must reject a pre-existing symlink before
+# it can write the summary returned by the remote host. Drop the in-flight
+# child left by the refusal case above so this retire can finish on the host
+# and actually emit a summary. The remote home is intentionally consumed; the
+# parent route and metadata must remain for a safe retry after the path is
+# repaired.
+rm -f "$REMOTE_HOME/state/work-child.meta"
+rm -f "$LOCAL_META"
+cp "$TMP_ROOT/ios-meta-before-publication" "$LOCAL_META"
+REMOTE_SUMMARY_EXTERNAL="$TMP_ROOT/remote-summary-external"
+mkdir -p "$REMOTE_SUMMARY_EXTERNAL"
+printf 'external sentinel\n' > "$REMOTE_SUMMARY_EXTERNAL/keep"
+rm -rf "$PARENT/data/ios"
+ln -s "$REMOTE_SUMMARY_EXTERNAL" "$PARENT/data/ios"
+if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/remote-summary-symlink.out" 2>&1; then
+  fail "remote teardown accepted a symlinked parent retirement summary directory"
+fi
+grep -F 'retirement summary directory is unsafe' "$TMP_ROOT/remote-summary-symlink.out" >/dev/null \
+  || fail "remote teardown did not refuse the symlinked parent retirement summary directory: $(cat "$TMP_ROOT/remote-summary-symlink.out")"
+[ -L "$PARENT/data/ios" ] || fail "remote teardown replaced the parent retirement summary symlink"
+[ "$(cd "$REMOTE_SUMMARY_EXTERNAL" && find . -mindepth 1 -print | sort)" = './keep' ] \
+  || fail "remote teardown changed the external retirement summary target"
+assert_absent "$REMOTE_HOME" \
+  "remote summary symlink refusal did not consume the already-retired remote home"
+assert_present "$PARENT/state/ios.meta" \
+  "remote summary symlink refusal removed the parent endpoint metadata"
+assert_grep '- ios ' "$PARENT/data/secondmates.md" \
+  "remote summary symlink refusal removed the registry route"
+pass "remote parent retirement refuses a symlinked summary directory before writing"
+
+# A stale same-id summary must not satisfy a later default remote retirement
+# when the remote host reports that the home was already gone and emits no new
+# summary block.
+rm -f "$PARENT/data/ios"
+mkdir -p "$PARENT/data/ios"
+printf 'stale summary from an earlier retirement\n' > "$PARENT/data/ios/retirement.md"
+if [ -e "$REMOTE_HOME" ] || [ -L "$REMOTE_HOME" ]; then
+  fail "remote home returned before the stale retire: $(ls -ld "$REMOTE_HOME" 2>&1; find "$REMOTE_HOME" -maxdepth 2 2>&1 | head -40)"
+fi
+if remote_env "$ROOT/bin/fm-teardown.sh" ios > "$TMP_ROOT/remote-stale-summary.out" 2>&1; then
+  fail "remote teardown accepted a stale same-id retirement summary: $(cat "$TMP_ROOT/remote-stale-summary.out")"
+fi
+grep -F 'could not record a parent-visible retirement summary' "$TMP_ROOT/remote-stale-summary.out" >/dev/null \
+  || fail "stale remote summary refusal did not preserve the parent route: $(cat "$TMP_ROOT/remote-stale-summary.out")"
+grep -F 'already-retired:' "$TMP_ROOT/remote-stale-summary.out" >/dev/null \
+  || fail "stale retire was not an already-gone home (home now: $(ls -ld "$REMOTE_HOME" 2>&1)): $(cat "$TMP_ROOT/remote-stale-summary.out")"
+grep -F 'stale summary from an earlier retirement' "$PARENT/data/ios/retirement.md" >/dev/null \
+  || fail "stale remote summary refusal replaced the pre-existing summary"
+assert_present "$PARENT/state/ios.meta" \
+  "stale remote summary refusal removed the parent endpoint metadata"
+assert_grep '- ios ' "$PARENT/data/secondmates.md" \
+  "stale remote summary refusal removed the registry route"
+pass "remote retirement requires a summary emitted by the current attempt"
+
+# --force remains the discard path for a completed remote retire that printed
+# no summary. It must still finish after the refusal above.
+if ! remote_env "$ROOT/bin/fm-teardown.sh" ios --force > "$TMP_ROOT/remote-force-no-summary.out" 2>&1; then
+  fail "remote --force did not finish a completed retire that emitted no summary: $(cat "$TMP_ROOT/remote-force-no-summary.out")"
+fi
+grep -F 'no parent-visible retirement summary' "$TMP_ROOT/remote-force-no-summary.out" >/dev/null \
+  || fail "remote --force did not report continuing without a summary: $(cat "$TMP_ROOT/remote-force-no-summary.out")"
+grep -F 'stale summary from an earlier retirement' "$PARENT/data/ios/retirement.md" >/dev/null \
+  || fail "remote --force replaced the pre-existing summary it was allowed to skip"
+assert_absent "$PARENT/state/ios.meta" \
+  "remote --force left the parent endpoint metadata in place"
+assert_no_grep '- ios ' "$PARENT/data/secondmates.md" \
+  "remote --force left the registry route in place"
+pass "remote --force finishes a completed retire that emitted no summary"
 
 echo "ALL TESTS PASSED"

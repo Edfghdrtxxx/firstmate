@@ -1721,6 +1721,45 @@ EOF
   pass "secondmate teardown retires empty homes and releases routing"
 }
 
+test_secondmate_teardown_refuses_symlinked_retirement_summary_dir() {
+  local home subhome external fakebin log lease fmroot err
+  home="$TMP_ROOT/teardown-summary-symlink-home"
+  subhome="$TMP_ROOT/teardown-summary-symlink-subhome"
+  external="$TMP_ROOT/teardown-summary-symlink-external"
+  fmroot="$TMP_ROOT/teardown-summary-symlink-fmroot"
+  err="$TMP_ROOT/teardown-summary-symlink.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$external"
+  printf 'external sentinel\n' > "$external/keep"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  ln -s "$external" "$home/data/domain"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/teardown-summary-symlink-fake")
+  log="$TMP_ROOT/teardown-summary-symlink-fake/tmux.log"
+  lease="$TMP_ROOT/teardown-summary-symlink-fake/lease"
+  printf 'domain\n' > "$lease"
+
+  if PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-summary-symlink-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"; then
+    fail "teardown accepted a symlinked retirement summary directory"
+  fi
+  grep -F 'retirement summary directory is unsafe' "$err" >/dev/null \
+    || fail "teardown did not explain the symlinked retirement summary directory refusal: $(cat "$err")"
+  [ -L "$home/data/domain" ] || fail "teardown replaced the retirement summary directory symlink"
+  [ ! -e "$external/retirement.md" ] || fail "teardown wrote a retirement summary through the symlink"
+  [ "$(cd "$external" && find . -mindepth 1 -print | sort)" = './keep' ] \
+    || fail "teardown changed the external retirement summary target"
+  [ -d "$subhome" ] || fail "teardown removed the secondmate home after the symlinked summary refusal"
+  [ -e "$home/state/domain.meta" ] || fail "teardown removed parent metadata after the symlinked summary refusal"
+  grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null \
+    || fail "teardown removed the registry route after the symlinked summary refusal"
+  pass "secondmate teardown refuses a symlinked retirement summary directory before writing"
+}
+
 test_secondmate_teardown_removes_returned_home_and_archives_summary() {
   local home subhome subhome_abs fakebin log lease fmroot summary
   home="$TMP_ROOT/teardown-summary-home"
@@ -3638,6 +3677,7 @@ test_secondmate_spawn_requires_seeded_matching_home
 test_secondmate_spawn_refuses_operational_dirs_outside_subhome
 test_fm_send_refuses_bare_window_without_home_meta
 test_secondmate_teardown_retires_empty_home
+test_secondmate_teardown_refuses_symlinked_retirement_summary_dir
 test_secondmate_teardown_removes_returned_home_and_archives_summary
 test_secondmate_teardown_records_obligation_when_returned_home_resists_removal
 test_secondmate_teardown_preserves_foreign_obligation_record
