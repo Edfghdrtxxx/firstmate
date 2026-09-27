@@ -8,9 +8,10 @@
 # captain-relevant events plus bounded declared-wait rechecks. This is the
 # token-efficient replacement for the prior always-inject daemon: routine
 # signal/stale/heartbeat wakes cost zero firstmate context; only done/
-# needs-decision/blocked/failed/persistent-wedge/check-output events and a
-# declared-wait recheck reach the LLM, and even then as one pre-read digest per
-# batch window. That digest is byte-bounded (see escalate_flush); when it cuts
+# needs-decision/blocked/failed/persistent-wedge/check-output events, a
+# declared-wait recheck, and the away idle reminder (idle_nudge) reach the
+# LLM, and even then as one pre-read digest per batch window. That digest is
+# byte-bounded (see escalate_flush); when it cuts
 # or omits anything it names a state/.subsuper-digests/ file holding every
 # buffered event verbatim.
 #
@@ -112,6 +113,10 @@
 #                                   digests; 0 = flush immediately (default 90)
 #          FM_HEARTBEAT_SCAN_SECS   cadence for the catch-all status scan
 #                                   (default 300)
+#          FM_IDLE_NUDGE_SECS       away mode only: seconds the supervisor pane
+#                                   may sit idle with nothing queued for it
+#                                   before one reminder is queued (default
+#                                   1800; 0 disables)
 #          FM_HOUSEKEEPING_TICK     seconds between housekeeping passes while
 #                                   the watcher is mid-cycle (default 15)
 #          FM_BUSY_REGEX            optional rendered busy-signature override
@@ -214,6 +219,8 @@ INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
 HEARTBEAT_SCAN_SECS_DEFAULT=300
+IDLE_NUDGE_SECS_DEFAULT=1800
+IDLE_NUDGE_TEXT="reminder: captain believes you, you must be justified when you stop. Check it out."
 HOUSEKEEPING_TICK_DEFAULT=15
 # Max time a buffered escalation may sit undelivered before the daemon retries
 # the normal flush path and, if that cannot confirm a submit, raises a loud wedge
@@ -1200,8 +1207,32 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
   fi
 }
 
+# --- away idle nudge ---------------------------------------------------------
+# A supervisor that stopped while the captain is away looks exactly like a quiet
+# night, so in away mode (never quiet mode) an idle supervisor pane with nothing
+# queued for it gets one reminder every IDLE_NUDGE_SECS. The clock lives in this
+# process only, so a restarted daemon starts a fresh one. The reminder is an
+# ordinary escalation: it rides the same guarded delivery and max-defer wedge
+# alarm, and while it or any digest is queued the clock stays reset.
+IDLE_NUDGE_SINCE=
+idle_nudge() {  # <state> <now>
+  local state=$1 now=$2 secs=${FM_IDLE_NUDGE_SECS:-$IDLE_NUDGE_SECS_DEFAULT}
+  if [ "$secs" -le 0 ] || ! afk_active "$state" \
+     || [ "$(fm_afk_mode "$state" 2>/dev/null)" != away ] \
+     || [ -s "$state/.subsuper-escalations" ] \
+     || pane_is_busy "${FM_SUPERVISOR_TARGET:-$FM_SUPERVISOR_TARGET_DEFAULT}" "${FM_SUPERVISOR_BACKEND:-tmux}"; then
+    IDLE_NUDGE_SINCE=
+    return 0
+  fi
+  [ -n "$IDLE_NUDGE_SINCE" ] || { IDLE_NUDGE_SINCE=$now; return 0; }
+  [ $((now - IDLE_NUDGE_SINCE)) -ge "$secs" ] || return 0
+  escalate_add "$state" "$IDLE_NUDGE_TEXT" && IDLE_NUDGE_SINCE=
+}
+
 # --- housekeeping (runs every tick while the watcher is mid-cycle) ----------
-# Four cheap jobs, each guarded so an empty/quiet fleet costs near zero:
+# Five cheap jobs, each guarded so an empty/quiet fleet costs near zero:
+#  0) away idle nudge: see idle_nudge above; it runs before the flush so a
+#     digest delivered this tick still resets the idle clock.
 #  1) batch flush: if the escalation buffer's oldest content is older than
 #     ESCALATE_BATCH_SECS (or batching is disabled), inject one digest.
 #  1b) max-defer escape: if the buffer is STILL undelivered past MAX_DEFER_SECS,
@@ -1219,6 +1250,9 @@ housekeeping() {  # <state>
   local state=$1 now due f key task win marker age last max_defer oldest pause_secs marker_epoch until bounded_until pause_reason
   now=$(_now)
   migrate_watcher_pause_markers "$state"
+
+  # (0) away idle nudge
+  idle_nudge "$state" "$now"
 
   # (1) batch flush
   if [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ]; then
