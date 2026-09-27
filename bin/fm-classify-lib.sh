@@ -2587,7 +2587,7 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably
 # working; 1 (actionable/surface) if any is not, or no task can be resolved. Pass the
-# same space-separated file list the caller classified with the span read above.
+# same per-file argument list the caller classified with the span read above.
 # Files are mapped to task ids by stripping the .status / .turn-ended suffix;
 # a no-verb wake with nothing
 # provably working must surface, so an empty/unresolvable list returns 1.
