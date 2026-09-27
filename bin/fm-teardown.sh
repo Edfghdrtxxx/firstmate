@@ -1058,9 +1058,16 @@ remote_secondmate_teardown() {
     if out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh retire "$ID" < /dev/null 2>&1); then rc=0; else rc=$?; fi
   fi
   if ! remote_retire_parent_store "$remote_host" "$remote_home" "$out" "$rc"; then
-    echo "error: could not record a parent-visible retirement summary for $ID; preserving the route for retry" >&2
-    [ -z "$out" ] || printf '%s\n' "$out" >&2
-    return 1
+    # --force is the same discard authority used for unlanded work. It may
+    # finish a remote retire that completed with no summary, so a provably
+    # gone home is not stuck forever. The default path still refuses.
+    if [ "$FORCE" = --force ] && [ "$rc" -eq 0 ]; then
+      echo "warning: no parent-visible retirement summary for $ID; --force continues because the remote retire completed" >&2
+    else
+      echo "error: could not record a parent-visible retirement summary for $ID; preserving the route for retry" >&2
+      [ -z "$out" ] || printf '%s\n' "$out" >&2
+      return 1
+    fi
   fi
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
