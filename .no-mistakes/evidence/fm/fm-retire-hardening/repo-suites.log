@@ -1,0 +1,24 @@
+$ bash tests/fm-remote-secondmate-parent-binding.test.sh   (118.60s)
+ok - remote provisioning publishes durable parent state before its completion marker
+ok - a remote secondmate's finished worker cleans up when the remote code root's own .env looked relay-active
+ok - a remote secondmate's finished worker cleans up when only an ambient exported token looked relay-active
+ok - a remote secondmate's finished worker cleans up with no relay signal anywhere
+ok - a remote secondmate's own committed relay token still refuses cleanup
+ok - remote secondmate publication refuses targets outside its home
+ok - remote parent retirement refuses a symlinked summary directory before writing
+ok - remote retirement requires a summary emitted by the current attempt
+ok - remote --force finishes a completed retire that emitted no summary
+ALL TESTS PASSED
+
+$ bash tests/fm-secondmate-safety.test.sh   (242.51s, tail shown - every case reported ok)
+ok - secondmate teardown refuses a symlinked retirement summary directory before writing
+ok - secondmate teardown refuses a symlinked retirement reports directory before writing
+ok - secondmate force teardown refuses a symlinked nested retirement directory before writing
+ok - secondmate teardown removes the returned home and archives its private state
+ok - secondmate teardown records a durable obligation when the returned home resists removal
+ok - secondmate teardown preserves a same-id obligation that names a different surviving home
+ok - secondmate teardown pins the retirement summary and obligation outside a redirected home
+ok - force teardown sweeps nested secondmate homes before deletion
+ok - force teardown names only surviving nested capture paths
+ok - force teardown keys nested captures by mate-id lineage
+... (all remaining cases ok, no failures)

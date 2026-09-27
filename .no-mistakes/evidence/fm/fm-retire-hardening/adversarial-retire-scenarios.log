@@ -1,0 +1,26 @@
+=== S-A: nested-prefix intermediate symlink under --force ===
+ok - S-A: force teardown refuses a nested-prefix intermediate symlink before any write
+=== S-B: planted *.tmp.$$ symlinks on a happy-path retire ===
+ok - S-B: happy-path retire ignores planted tmp symlinks, archives inside the parent
+=== S-C: seed-rollback obligation tmp symlink ===
+
+
+
+
+
+
+
+ok - S-C: seed rollback unlinks a planted obligation tmp symlink before writing
+=== S-D: remote retire store tmp symlink over the fake-SSH boundary ===
+
+
+
+
+
+
+
+S-D teardown rc=0
+ok - S-D: remote retire store ignores planted tmp symlinks and stores the fresh summary
+=== S-E: local retire obligation tmp symlink on resisted removal ===
+ok - S-E: local retire unlinks a planted obligation tmp symlink before writing
+ALL ADVERSARIAL SCENARIOS PASSED
