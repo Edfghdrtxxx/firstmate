@@ -35,10 +35,6 @@ Calm's built-in wrappers preserve Pi's execution behavior, and input delivery, o
 Every hidden Firstmate input remains available to the model and in serialized session data and exported artifacts.
 Legacy operational custom messages remain in session data and Pi's sidebar tree, and the main HTML transcript omits them.
 Toggling Calm off restores Pi's thinking labels, tool rows, and operational rows, and `Ctrl+O` expansion state is preserved.
-Ctrl+O still expands Pi's startup header and tool rows, and Firstmate pins Pi's current interrupt binding on the footer in that header's expanded form, such as `escape to interrupt`, because the expanded header sits in the scrolling transcript and leaves the viewport while the view follows the latest rows.
-That footer line is removed when tool output collapses.
-While tool output is expanded, Firstmate drops user-message vertical padding and the blank lines between transcript rows so earlier rows stay in the viewport with the newest rows.
-After that expansion, user-message vertical padding stays reduced when tool output collapses, so a later Calm toggle still leaves earlier tool output on screen.
 
 Pi's supported presentation API does not expose a global transcript filter.
 Expanded reasoning and its reserved spacing, built-in tool images, user-bash rows, skill and summary rows, generic status notices, and other arbitrary custom-tool or extension rows remain visible.
@@ -47,7 +43,7 @@ These are supported-API boundaries rather than hidden-content failures.
 ## Pi compatibility
 
 Calm has no numeric Pi version minimum or maximum and never refuses Pi solely because its version is newer than a previously verified version.
-The collapsed-thinking, operational-user-row, queued-operational-row, startup-hint, expanded-density, and export-transcript presentation adapters probe the exact Pi API seam they patch when Calm loads.
+The collapsed-thinking, operational-user-row, queued-operational-row, and export-transcript presentation adapters probe the exact Pi API seam they patch when Calm loads.
 If Pi removes one of those seams, Calm logs a diagnostic naming the unavailable adapter and skips only that adapter; `/calm`, the other adapters, and unrelated Pi extensions remain available.
 Keeping hidden queued inputs across Escape also needs members of Pi's live session, which exist only once a session runs.
 Calm checks them for each session on its first queued-listing draw, before hiding anything.
