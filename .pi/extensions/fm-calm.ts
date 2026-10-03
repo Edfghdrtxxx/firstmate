@@ -6,10 +6,11 @@
 // with a disposable component factory, and setHiddenThinkingLabel().
 // ./lib/fm-calm-working-ship.ts owns the animated working presentation this file
 // installs. The focused tests pin those assumptions but never reject a
-// newer Pi solely for its version. The collapsed-thinking, operational-user, and
-// queued-operational presentation adapters probe the exact API they patch and degrade
-// independently with a diagnostic (see installCalmPresentationAdapter below) if a future
-// Pi removes it; Pi still exposes no global renderer for arbitrary built-in or custom rows.
+// newer Pi solely for its version. The collapsed-thinking, operational-user,
+// queued-operational, startup-hint, expanded-density, and export-transcript presentation adapters probe the exact API they
+// patch and degrade independently with a diagnostic (see installCalmPresentationAdapter
+// below) if a future Pi removes it; Pi still exposes no global renderer for arbitrary
+// built-in or custom rows.
 // docs/configuration.md owns the home-local Calm preference contract.
 //
 // Pi has one first-registration-wins ToolDefinition per tool name, with no merge or
@@ -44,8 +45,18 @@ import {
   createLsToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
+  AgentSession,
+  InteractiveMode,
+  UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Container, getKeybindings, type Component } from "@earendil-works/pi-tui";
+import {
+  Box,
+  Container,
+  getKeybindings,
+  Spacer,
+  type Component,
+  type Keybinding,
+} from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
 import { installCalmAssistantLayout } from "./lib/fm-calm-assistant-layout.ts";
 import { installCalmOperationalUserLayout } from "./lib/fm-calm-operational-user-layout.ts";
@@ -112,6 +123,171 @@ const realpathOrSelf = (path: string): string => {
 };
 const extensionRealFile = realpathOrSelf(extensionFile);
 
+// Pi 1.0.0 draws the expanded startup header inside the scrolling transcript and follows
+// the end, so the interrupt hint leaves an 80-row viewport while tool rows stay visible.
+// The footer repeats Pi's own expanded hint and stays on screen. docs/calm.md owns that
+// behavior. The symbol blocks a second extension registration from wrapping the method
+// again.
+const CALM_STARTUP_HINT_PATCH = Symbol.for("firstmate:calm-startup-hint:pi-1.0.0");
+const CALM_STARTUP_HINT_STATUS_KEY = "firstmate-startup-hint";
+const CALM_EXPANDED_DENSITY = Symbol.for("firstmate:calm-expanded-user-density");
+
+function expandedTranscriptDensity(): boolean {
+  return (globalThis as { [key: symbol]: boolean | undefined })[CALM_EXPANDED_DENSITY] === true;
+}
+
+function setExpandedTranscriptDensity(expanded: boolean): void {
+  (globalThis as { [key: symbol]: boolean })[CALM_EXPANDED_DENSITY] = expanded;
+}
+
+function lineVisibleText(line: string): string {
+  return line
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .trim();
+}
+
+function withoutVerticalPadding(lines: string[]): string[] {
+  const next = [...lines];
+  while (next.length > 1 && lineVisibleText(next[0]) === "") next.shift();
+  while (next.length > 1 && lineVisibleText(next[next.length - 1]) === "") next.pop();
+  return next;
+}
+
+type InteractiveModeStartupHint = {
+  setToolsExpanded(expanded: boolean): void;
+  setExtensionStatus(key: string, text: string | undefined): void;
+  chatContainer?: { children: unknown[] };
+};
+
+function expandedInterruptHint(expanded: boolean): string | undefined {
+  if (!expanded) return undefined;
+  // app.interrupt lives on Pi's app keybindings, which replace the TUI manager before
+  // extensions load. The TUI type does not list that id.
+  const keys = getKeybindings().getKeys("app.interrupt" as Keybinding);
+  if (keys.length === 0) return undefined;
+  const text = keys
+    .join("/")
+    .split("/")
+    .map((key) =>
+      key
+        .split("+")
+        .map((part) =>
+          process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part,
+        )
+        .join("+"),
+    )
+    .join("/");
+  return `${text} to interrupt`;
+}
+
+function installCalmStartupHint(): void {
+  const registry = globalThis as typeof globalThis & {
+    [key: symbol]: true | undefined;
+  };
+  if (registry[CALM_STARTUP_HINT_PATCH]) return;
+
+  if (typeof InteractiveMode !== "function") {
+    throw new Error("Firstmate Calm requires Pi InteractiveMode");
+  }
+  const prototype = InteractiveMode.prototype as unknown as InteractiveModeStartupHint;
+  const original = prototype.setToolsExpanded;
+  if (typeof original !== "function") {
+    throw new Error("Firstmate Calm requires Pi InteractiveMode.setToolsExpanded");
+  }
+  if (typeof prototype.setExtensionStatus !== "function") {
+    throw new Error("Firstmate Calm requires Pi InteractiveMode.setExtensionStatus");
+  }
+
+  prototype.setToolsExpanded = function (expanded: boolean): void {
+    original.call(this, expanded);
+    // Stay dense after the first expansion. /calm restores the previous flag by
+    // expanding and collapsing again, and a collapsed transcript that grew during
+    // the session otherwise pushes earlier tool output above the viewport.
+    if (expanded) setExpandedTranscriptDensity(true);
+    for (const child of this.chatContainer?.children ?? []) {
+      if (child instanceof Spacer) child.setLines(expanded ? 0 : 1);
+    }
+    this.setExtensionStatus(CALM_STARTUP_HINT_STATUS_KEY, expandedInterruptHint(expanded));
+  };
+  registry[CALM_STARTUP_HINT_PATCH] = true;
+}
+
+// User-message Markdown padding is inside the component, so collapsing chat
+// spacers alone leaves a blank line above and below every user row. Drop those
+// once tool output has been expanded. Chat spacers return when it collapses.
+const CALM_EXPANDED_DENSITY_PATCH = Symbol.for("firstmate:calm-expanded-density:pi-1.0.0");
+
+function installCalmExpandedDensity(): void {
+  const registry = globalThis as typeof globalThis & {
+    [key: symbol]: true | undefined;
+  };
+  if (registry[CALM_EXPANDED_DENSITY_PATCH]) return;
+  if (typeof UserMessageComponent !== "function") {
+    throw new Error("Firstmate Calm requires Pi UserMessageComponent");
+  }
+  const prototype = UserMessageComponent.prototype as unknown as {
+    render(width: number): string[];
+  };
+  const original = prototype.render;
+  if (typeof original !== "function") {
+    throw new Error("Firstmate Calm requires Pi UserMessageComponent.render");
+  }
+  prototype.render = function (width: number): string[] {
+    const lines = original.call(this, width);
+    return expandedTranscriptDensity() ? withoutVerticalPadding(lines) : lines;
+  };
+  registry[CALM_EXPANDED_DENSITY_PATCH] = true;
+}
+
+// Pi 1.0.0's HTML export renders display:false custom messages into the main transcript
+// as hidden hook nodes. The sidebar tree and the embedded session data still include
+// them. docs/calm.md owns the boundary: the main transcript omits those entries.
+// The symbol blocks a second extension registration from wrapping export twice.
+const CALM_EXPORT_TRANSCRIPT_PATCH = Symbol.for("firstmate:calm-export-transcript:pi-1.0.0");
+const HIDDEN_CUSTOM_MESSAGE_RENDER =
+  "        if (entry.type === 'custom_message') {\n          const hidden = entry.display === false;\n";
+const HIDDEN_CUSTOM_MESSAGE_RENDER_OMIT =
+  "        if (entry.type === 'custom_message') {\n          if (entry.display === false) return '';\n          const hidden = entry.display === false;\n";
+
+type AgentSessionExport = {
+  exportToHtml(outputPath?: string, options?: unknown): Promise<string>;
+};
+
+function omitHiddenCustomMessagesFromMainTranscript(outputPath: string): void {
+  let html: string;
+  try {
+    html = readFileSync(outputPath, "utf8");
+  } catch {
+    return;
+  }
+  if (!html.includes(HIDDEN_CUSTOM_MESSAGE_RENDER)) return;
+  const next = html.replace(HIDDEN_CUSTOM_MESSAGE_RENDER, HIDDEN_CUSTOM_MESSAGE_RENDER_OMIT);
+  if (next !== html) writeFileSync(outputPath, next);
+}
+
+function installCalmExportTranscript(): void {
+  const registry = globalThis as typeof globalThis & {
+    [key: symbol]: true | undefined;
+  };
+  if (registry[CALM_EXPORT_TRANSCRIPT_PATCH]) return;
+  if (typeof AgentSession !== "function") {
+    throw new Error("Firstmate Calm requires Pi AgentSession");
+  }
+  const prototype = AgentSession.prototype as unknown as AgentSessionExport;
+  const original = prototype.exportToHtml;
+  if (typeof original !== "function") {
+    throw new Error("Firstmate Calm requires Pi AgentSession.exportToHtml");
+  }
+  prototype.exportToHtml = function (outputPath?: string, options?: unknown): Promise<string> {
+    return original.call(this, outputPath, options).then((written) => {
+      omitHiddenCustomMessagesFromMainTranscript(written);
+      return written;
+    });
+  };
+  registry[CALM_EXPORT_TRANSCRIPT_PATCH] = true;
+}
+
 // Each presentation adapter probes the exact Pi API it patches. If a future Pi removes
 // that API, only the affected adapter degrades; the rest of Calm keeps working.
 function installCalmPresentationAdapter(name: string, install: () => void): void {
@@ -127,6 +303,9 @@ export default function (pi: ExtensionAPI) {
   installCalmPresentationAdapter("collapsed-thinking", installCalmAssistantLayout);
   installCalmPresentationAdapter("operational-user-row", installCalmOperationalUserLayout);
   installCalmPresentationAdapter("queued-operational-row", installCalmPendingOperationalLayout);
+  installCalmPresentationAdapter("startup-hint", installCalmStartupHint);
+  installCalmPresentationAdapter("expanded-density", installCalmExpandedDensity);
+  installCalmPresentationAdapter("export-transcript", installCalmExportTranscript);
 
   let exportRendering = false;
   let removeTerminalInputHandler: (() => void) | undefined;

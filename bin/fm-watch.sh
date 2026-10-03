@@ -162,8 +162,10 @@
 # start), its state directory, and its own bin directory still exist; when one
 # is gone it logs "watcher: exiting - <what> no longer exists: <path>" to stderr
 # and exits 1, so a watcher whose temporary home or disposable checkout was
-# deleted stops itself instead of running on as an orphan. That check is scoped
-# to this process alone and never signals another watcher.
+# deleted stops itself instead of running on as an orphan. A lock wait whose
+# parent directory disappears fails instead of spinning, and the same exit is
+# logged from cleanup, so a poll blocked inside that wait still stops. That
+# check is scoped to this process alone and never signals another watcher.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2484,8 +2486,38 @@ pr_poll_publish_release() {
   PR_POLL_PUBLISH_LOCK=
 }
 
+# Log the one exit reason and return 0 when this watcher's world is gone.
+# Return 1 when the home, state directory, lock, and code root are all still
+# present. watcher_world_gone owns these four messages.
+WATCHER_WORLD_GONE_LOGGED=0
+watcher_world_gone() {
+  [ "$WATCHER_WORLD_GONE_LOGGED" -eq 1 ] && return 0
+  if [ "${WATCH_HOME_EXISTED:-0}" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
+    echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
+    WATCHER_WORLD_GONE_LOGGED=1
+    return 0
+  fi
+  if [ ! -d "$STATE" ]; then
+    echo "watcher: exiting - state directory no longer exists: $STATE" >&2
+    WATCHER_WORLD_GONE_LOGGED=1
+    return 0
+  fi
+  if [ ! -e "$WATCH_LOCK/pid" ]; then
+    echo "watcher: exiting - state directory was torn down (singleton lock removed): $STATE" >&2
+    WATCHER_WORLD_GONE_LOGGED=1
+    return 0
+  fi
+  if [ ! -d "$SCRIPT_DIR" ]; then
+    echo "watcher: exiting - code root no longer exists: $SCRIPT_DIR" >&2
+    WATCHER_WORLD_GONE_LOGGED=1
+    return 0
+  fi
+  return 1
+}
+
 watcher_cleanup() {
   local cleanup_status=0 owns_lock=0 transition=release-lock
+  watcher_world_gone || true
   pr_poll_publish_release || cleanup_status=1
   pr_poll_control_release || cleanup_status=1
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then
@@ -2574,9 +2606,11 @@ resurface_after_downtime() {
   fi
   if [ "$WATCHER_RECOVERY_PENDING" -ne 1 ]; then
     if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+      watcher_world_gone && exit 1
       echo "watcher: recovery state could not be consumed safely" >&2
       exit 1
     fi
+    watcher_world_gone && exit 1
     [ "$FM_RECOVERY_MARKER_ACTION" = recover ] || return 0
   fi
   wake "check: rearm-resurface"
@@ -2592,19 +2626,8 @@ while :; do
   # with no holder at all is read as the same teardown: only a fresh watcher
   # ever recreates the lock, and that case is the self-eviction below.
   # Scoped to this process alone: no other watcher is signalled.
-  if [ "$WATCH_HOME_EXISTED" -eq 1 ] && [ ! -d "$FM_HOME" ]; then
-    echo "watcher: exiting - home no longer exists: $FM_HOME" >&2
-    exit 1
-  elif [ ! -d "$STATE" ]; then
-    echo "watcher: exiting - state directory no longer exists: $STATE" >&2
-    exit 1
-  elif [ ! -e "$WATCH_LOCK/pid" ]; then
-    echo "watcher: exiting - state directory was torn down (singleton lock removed): $STATE" >&2
-    exit 1
-  elif [ ! -d "$SCRIPT_DIR" ]; then
-    echo "watcher: exiting - code root no longer exists: $SCRIPT_DIR" >&2
-    exit 1
-  fi
+  # watcher_world_gone owns the four exit lines.
+  watcher_world_gone && exit 1
 
   # Self-eviction: if the singleton lock no longer names this process, a second
   # watcher has taken over (e.g. a transient duplicate from a racy arm). Stand
@@ -2647,6 +2670,7 @@ while :; do
   # wake exits the cycle like every other wake, so its marker is stamped before
   # any relaunch and the restarted watcher will not re-probe early.
   secondmate_liveness_tick || {
+    watcher_world_gone && exit 1
     echo "watcher: secondmate liveness check failed" >&2
     exit 1
   }
@@ -2655,6 +2679,7 @@ while :; do
   # Observe the foreign queue before the rest of this cycle so an aged row wakes
   # the parent without consuming or rewriting the receiving home's record.
   secondmate_wake_stall_tick || {
+    watcher_world_gone && exit 1
     echo "watcher: secondmate wake-loop observation failed" >&2
     exit 1
   }
@@ -2686,6 +2711,10 @@ while :; do
   else
     triage_log "inactive-outcome reconciliation unavailable"
   fi
+  # A scan blocked on a lock in a directory that disappeared while it ran
+  # returns here. Stop before a later cadence treats the missing files as due
+  # and reports a wake.
+  watcher_world_gone && exit 1
 
   # Slow per-task checks (firstmate writes these, e.g. a merged-PR poll).
   # Time-based via .last-check mtime so the cadence survives watcher restarts.
