@@ -2,7 +2,7 @@
 name: bootstrap-diagnostics
 description: >-
   Agent-only handling playbook for session-start bootstrap diagnostics.
-  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy, or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
+  Use whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line - MISSING, MISSING_MANUAL, PRESENTATION_UNAVAILABLE, BACKEND_INVALID, NEEDS_GH_AUTH, TANGLE, STARTUP_MEMORY_BUDGET, CREW_DISPATCH invalid, FLEET_SYNC, NETWORK_CHECKS, HOME_SUMMARY, BACKLOG_RECONCILE, HOME_RETIRE, SECONDMATE_SYNC, SECONDMATE_LIVENESS, SECONDMATE_HANDOFF, NUDGE_SECONDMATES, or FMX - or reports that an interrupted backlog cleanup may have left an endpoint or local copy, or when a standalone bin/fm-bootstrap.sh or bin/fm-startup-network.sh run prints one of those lines.
   A silent bootstrap section, or any other BOOTSTRAP_INFO fact, means no skill load.
 user-invocable: false
 metadata:
@@ -40,6 +40,7 @@ When any diagnostic needs captain attention, report the plain consequence and re
 - `CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>` - the optional dispatch profile file exists but failed low-cost bootstrap validation; stop profile-based dispatch, report the actionable error, and require correction of the malformed schema, unverified harness name, or invalid harness/effort pair rather than falling back around it or selecting a bad profile.
 - `FLEET_SYNC: <repo>: skipped: <reason>` - a benign one-off skip (offline, no origin, local-only); bootstrap continued, investigate only if it blocks work.
   A skip can also report the bounded fleet-refresh timeout (`FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT`, or a fleet-size-aware default with a 20 second floor); a timeout never blocks startup.
+  `skipped: registry entry does not resolve to a delivery posture` is the one skip that is not one-off: the clone is left alone on every bootstrap until `data/projects.md` is corrected, so run the printed `bin/fm-project-mode.sh <repo>` to read the refusal and fix the entry.
 - `FLEET_SYNC: <repo>: recovered: <detail>` - the clone had drifted onto a clean detached HEAD holding no unique commits and the sync self-healed it (re-attached the default branch and fast-forwarded); no action needed, it is reported only so the self-heal is visible.
 - `FLEET_SYNC: <repo>: STUCK: on <state>, N commits behind <base> - needs attention` - the clone is dirty, on a non-default branch, detached with unique commits, or diverged, so the sync left it untouched (never forcing or discarding); it will keep falling behind until you look.
   A loud STUCK, especially a growing N across bootstraps, means that clone needs hands-on attention; dispatch a crewmate or resolve it before it strands work.
@@ -57,6 +58,21 @@ When any diagnostic needs captain attention, report the plain consequence and re
   A validation error means the record cannot be trusted, so do not assume cleanup completed or follow any path or argument stored in it.
   Read the named reason, inspect the marker as inert data when validation failed, fix the record or backlog-file problem, and rerun session start so the valid recorded transition replays.
   Never delete `state/<id>.backlog-close` by hand - that can discard a completion link or captain-call retention the cleanup captured, and the surviving marker prevents the record sweep from starting the item meanwhile.
+- `HOME_RETIRE: <id>: retired home <path> could not be removed; inspect it and delete or archive it by hand` - a secondmate teardown could not prove the returned directory was removed, so `state/<id>.home-retire` still records the obligation and this sweep's `treehouse destroy` retry also failed.
+  Read `phase=` and `lease_holder=` before touching the directory.
+  `phase=returned` means the lease for that record is already released; what remains is a directory that may still hold the mate's private files, and deleting it does not strand a lease.
+  `phase=recorded` with `lease_holder=` means the sweep returns only that holder via `treehouse return --if-lease-holder`.
+  If that return did not succeed, the lease may still be held: do not delete the directory by hand, because that strands the pool lease.
+  A record with no `lease_holder=` is the same leased-and-unremovable case: the sweep will not return it.
+  A bounded summary of the retired state may already exist at `data/<id>/retirement.md`.
+  After the directory is actually gone and the lease is released, remove `state/<id>.home-retire`.
+- `HOME_RETIRE: <id>: treehouse is unavailable; ...` - same obligation, but the sweep could not retry because treehouse is not on PATH.
+  Install or expose treehouse and rerun session start, or handle the named path by hand.
+- `HOME_RETIRE: <id>: remote home <path> was not proved removed; ...` - a remote retirement could not prove the home on its configured host was removed, so the parent recorded `phase=remote` in `state/<id>.home-retire`.
+  The named `home=` is a remote path; never touch any local path under it, and the sweep deliberately does not retry because the slot is not local.
+  Reconcile it through the remote route (re-run retirement or inspect on that host), then remove the record once removal is proved.
+- `HOME_RETIRE: unsafe retirement record refused: <reason>` / `HOME_RETIRE: <record> is incomplete` - the `state/<id>.home-retire` record itself failed validation.
+  Inspect the named record and its `home=` path before doing anything; fix or remove the record only after confirming what the path actually is.
 - `BACKLOG_RECONCILE: <id>: worker record exists but its backlog item could not be read: <reason>` - this home could not determine whether the item matches its worker record.
   Resolve the named backlog read problem and rerun session start; never guess by starting or closing an unreadable item.
 - `BACKLOG_RECONCILE: <id>: worker record exists but its backlog item could not be moved to In flight: <reason>` - this home owns a worker whose backlog item is still queued, and the reconciliation could not correct it.

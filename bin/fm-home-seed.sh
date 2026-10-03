@@ -20,7 +20,11 @@
 #       the .fm-secondmate-home identity marker, and data/secondmates.md is updated.
 #       Seeding is transactional: on validation, clone, init, or registry failure,
 #       generated briefs, new homes, new project clones, and registry edits are
-#       rolled back. Treehouse-acquired homes are returned only when the rollback
+#       rolled back. Rollback records the removal obligation
+#       state/<id>.home-retire before returning a leased home, then destroys
+#       the returned slot; a failed destroy leaves the obligation for the next
+#       locked session start to retry and report. Treehouse-acquired homes are
+#       returned only when the rollback
 #       target is safe; a failed return warns because the lease may still be held.
 #       Set FM_SECONDMATE_CHARTER='<charter>' to seed from inline charter text
 #       when no filled charter brief exists. Set FM_SECONDMATE_SCOPE='<scope>'
@@ -456,14 +460,28 @@ EOF
   return 1
 }
 
+# Single reader of a project's registered posture for seeding. It prints the
+# parser's "<mode> <yolo>" line, and fails when bin/fm-project-mode.sh
+# refuses the registry entry, so a posture the fleet cannot resolve stops the
+# seed instead of arriving as an empty mode that passes every posture guard.
+registered_posture_line() {  # <project>
+  local project=$1 line
+  line=$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$FM_ROOT/bin/fm-project-mode.sh" "$project") || {
+    echo "error: project $project does not resolve to a delivery posture (see the refusal above); correct $DATA/projects.md" >&2
+    return 1
+  }
+  printf '%s\n' "$line"
+}
+
 clone_project() {
-  local project=$1 home=$2 src dst url dst_url mode
+  local project=$1 home=$2 src dst url dst_url mode mode_line seed_default seed_branch
   src="$PROJECTS/$project"
   dst=$(validate_project_destination "$home" "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
   git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
+  mode_line=$(registered_posture_line "$project") || return 1
   read -r mode _ <<EOF
-$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$FM_ROOT/bin/fm-project-mode.sh" "$project")
+$mode_line
 EOF
   if [ "$mode" = local-only ]; then
     echo "error: project $project is local-only; secondmate routes support only no-mistakes and direct-PR projects" >&2
@@ -481,16 +499,51 @@ EOF
     return 0
   fi
   url=$(source_origin_url "$project" "$mode" "$src") || return 1
-  git clone --quiet "$url" "$dst"
+  # Seed the project as a hardlinked local clone of the parent's checkout
+  # (`git clone --local` shares the parent's object files at seed time while
+  # keeping a fully independent .git: own refs, own config, own origin, so
+  # fleet-sync and mate workers never mutate the parent's repo). This drops the
+  # per-mate duplicated object store the 2026-09-26 audit measured (~1.7G for
+  # one home). Linked worktrees and --shared/--reference were evaluated and
+  # rejected; docs/secondmate-project-storage.md owns that finding. A failed
+  # local clone falls back to cloning the origin URL directly.
+  if git clone --quiet --local "$src" "$dst" 2>/dev/null; then
+    seed_default=
+    if git -C "$dst" remote set-url origin "$url" \
+       && git -C "$dst" fetch --quiet --prune origin 2>/dev/null \
+       && git -C "$dst" remote set-head origin --auto >/dev/null 2>&1; then
+      seed_default=$(git -C "$dst" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+      seed_default=${seed_default#origin/}
+    fi
+    if [ -z "$seed_default" ] \
+       || ! git -C "$dst" checkout --quiet -B "$seed_default" "origin/$seed_default" 2>/dev/null; then
+      rm -rf -- "$dst"
+      echo "warning: local clone of $project from $src could not be reconciled to origin's default branch; cloning from origin instead" >&2
+      git clone --quiet "$url" "$dst" || return 1
+    else
+      while IFS= read -r seed_branch; do
+        [ -n "$seed_branch" ] || continue
+        [ "$seed_branch" = "$seed_default" ] && continue
+        git -C "$dst" branch -D -- "$seed_branch" >/dev/null 2>&1 || true
+      done <<EOF
+$(git -C "$dst" for-each-ref --format='%(refname:short)' refs/heads)
+EOF
+    fi
+  else
+    rm -rf -- "$dst"
+    echo "warning: local clone of $project from $src failed; cloning from origin instead" >&2
+    git clone --quiet "$url" "$dst" || return 1
+  fi
 }
 
 validate_seed_project() {
-  local project=$1 src mode url
+  local project=$1 src mode url mode_line
   src="$PROJECTS/$project"
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
   git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
+  mode_line=$(registered_posture_line "$project") || return 1
   read -r mode _ <<EOF
-$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$FM_ROOT/bin/fm-project-mode.sh" "$project")
+$mode_line
 EOF
   if [ "$mode" = local-only ]; then
     echo "error: project $project is local-only; secondmate routes support only no-mistakes and direct-PR projects" >&2
@@ -516,6 +569,7 @@ seed_exit_cleanup() {
   seed_rollback
   seed_registry_lock_release
 }
+SEED_ID=
 SEED_HOME=
 SEED_HOME_ACQUIRED=0
 SEED_HOME_CREATED=0
@@ -575,17 +629,100 @@ seed_rollback_target() {
   printf '%s\n' "$abs_target"
 }
 
+# Rollback of a treehouse-acquired seed home records the same durable removal
+# obligation retirement uses (state/<id>.home-retire, read by
+# retired_home_reconcile in bin/fm-bootstrap.sh) before releasing the lease,
+# so a slot the destroy step cannot remove is retried and reported at the next
+# locked session start instead of being orphaned with a transient warning.
+seed_rollback_home_retire_record_write() {  # <id> <home> <phase>
+  local id=$1 home=$2 phase=$3 record tmp
+  [ -n "$id" ] || return 1
+  case "$id" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+  record="$STATE/$id.home-retire"
+  mkdir -p -- "$STATE" || return 1
+  tmp="$record.tmp.$$"
+  [ ! -L "$tmp" ] || rm -f -- "$tmp"
+  {
+    printf 'id=%s\n' "$id"
+    printf 'home=%s\n' "$home"
+    printf 'phase=%s\n' "$phase"
+    printf 'lease_holder=%s\n' "$id"
+    printf 'at=%s\n' "$(date +%s)"
+  } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
+seed_rollback_home_retire_record_foreign() {  # <record> <abs_home>
+  local record=$1 home=$2 record_home
+  [ -f "$record" ] || return 1
+  record_home=$(sed -n 's/^home=//p' "$record" | head -1)
+  [ -n "$record_home" ] && [ "$record_home" != "$home" ] \
+    && { [ -e "$record_home" ] || [ -L "$record_home" ]; }
+}
+
+# Records are keyed by mate id alone, so a rollback obligation under an id that
+# already tracks a different surviving home must not overwrite or delete it.
+seed_rollback_home_retire_record_clear() {  # <record> <abs_home>
+  local record=$1 home=$2
+  [ -n "$record" ] || return 0
+  [ -f "$record" ] || return 0
+  if seed_rollback_home_retire_record_foreign "$record" "$home"; then
+    echo "warning: leaving retirement obligation $record in place; it still names $(sed -n 's/^home=//p' "$record" | head -1)" >&2
+    return 0
+  fi
+  rm -f -- "$record"
+}
+
 seed_return_treehouse_home() {
-  local home=$1 abs_home
+  local home=$1 abs_home marker_id='' record_id='' retire_record='' kept_returned=0
   abs_home=$(seed_rollback_target "$home" "treehouse-acquired home") || return 0
   if ! command -v treehouse >/dev/null 2>&1; then
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; treehouse command not found" >&2
     return 0
   fi
+  [ -f "$abs_home/.fm-secondmate-home" ] && marker_id=$(cat "$abs_home/.fm-secondmate-home" 2>/dev/null || true)
+  # A home returned before its identity marker was written still carries the
+  # obligation under the seed id: reconcile treats an absent marker as
+  # unresolved rather than proof the slot moved on.
+  record_id=$marker_id
+  [ -n "$record_id" ] || record_id=${SEED_ID:-}
+  kept_returned=0
+  if [ -n "$record_id" ]; then
+    retire_record="$STATE/$record_id.home-retire"
+    if seed_rollback_home_retire_record_foreign "$retire_record" "$abs_home"; then
+      echo "warning: retirement obligation $retire_record still names $(sed -n 's/^home=//p' "$retire_record" | head -1); leaving it untouched" >&2
+      retire_record=
+    elif [ -f "$retire_record" ] \
+         && [ "$(sed -n 's/^phase=//p' "$retire_record" | head -1)" = returned ] \
+         && [ "$(sed -n 's/^home=//p' "$retire_record" | head -1)" = "$abs_home" ]; then
+      # A later rollback must not downgrade or delete a record that already
+      # proves this home's lease was released.
+      kept_returned=1
+    elif ! seed_rollback_home_retire_record_write "$record_id" "$abs_home" recorded; then
+      retire_record=
+    fi
+  fi
   ( cd "$FM_ROOT" && treehouse return --force "$abs_home" >/dev/null ) || {
     echo "warning: failed to return treehouse-acquired home $abs_home during seed rollback; lease may still be held" >&2
+    if [ "$kept_returned" -eq 0 ]; then
+      seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
+    fi
     return 0
   }
+  if [ -n "$retire_record" ] \
+     && ! seed_rollback_home_retire_record_foreign "$retire_record" "$abs_home"; then
+    seed_rollback_home_retire_record_write "$record_id" "$abs_home" returned || true
+  fi
+  ( cd "$FM_ROOT" && treehouse destroy --yes "$abs_home" >/dev/null 2>&1 ) || true
+  if [ -e "$abs_home" ] || [ -L "$abs_home" ]; then
+    if [ -n "$retire_record" ]; then
+      echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback; the obligation stays recorded at $retire_record and the next locked session start retries and reports it" >&2
+    else
+      echo "warning: returned treehouse-acquired home $abs_home could not be removed during seed rollback; inspect and remove it manually" >&2
+    fi
+  else
+    seed_rollback_home_retire_record_clear "$retire_record" "$abs_home"
+  fi
 }
 
 seed_remove_created_home() {
@@ -671,9 +808,13 @@ registry_line_for_project() {
 }
 
 project_mode_in_home() {
-  local home=$1 project=$2 mode
+  local home=$1 project=$2 mode mode_line
+  mode_line=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_HOME="$home" "$FM_ROOT/bin/fm-project-mode.sh" "$project") || {
+    echo "error: project $project does not resolve to a delivery posture in $home (see the refusal above); correct $home/data/projects.md" >&2
+    return 1
+  }
   read -r mode _ <<EOF
-$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_HOME="$home" "$FM_ROOT/bin/fm-project-mode.sh" "$project")
+$mode_line
 EOF
   printf '%s\n' "$mode"
 }
@@ -708,7 +849,7 @@ sync_project_registry() {
 
 initialize_no_mistakes_project() {
   local home=$1 project=$2 created=$3 mode dst
-  mode=$(project_mode_in_home "$home" "$project")
+  mode=$(project_mode_in_home "$home" "$project") || return 1
   [ "$mode" = no-mistakes ] || return 0
   dst=$(validate_project_destination "$home" "$project") || return 1
   if git -C "$dst" remote get-url no-mistakes >/dev/null 2>&1; then
@@ -835,6 +976,7 @@ seed_home() {
   done
 
   SEED_ROLLBACK_ACTIVE=1
+  SEED_ID=$id
   SEED_COMMITTED=0
   SEED_HOME=
   SEED_HOME_ACQUIRED=0

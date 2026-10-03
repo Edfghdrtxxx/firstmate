@@ -37,10 +37,20 @@
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's panes or workspace and never
 # stops fm-remote or removes a sibling secondmate's workspace or panes.
+# Retirement also redirects STATE/DATA into the home being removed, so it
+# pins its obligation record and bounded summary into a temp dir and prints
+# them back to the calling parent as FM_RETIRE_SUMMARY_BEGIN/END and
+# FM_RETIRE_RECORD_BEGIN/END blocks; the parent owns storing and sweeping.
+# A retire whose home is already gone prints `already-retired: <id>` and
+# exits 0 before the sourced libraries can recreate that home's state dir.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
 # secondmate. cmd_relaunch below owns why the parent must hand it the profile.
+# It ends by printing the same route block `route` prints, so a caller that
+# invoked it directly (rather than through bin/fm-remote-secondmate-relaunch.sh,
+# which reads this block to keep the parent's own record in sync) still gets
+# the confirmed identity.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -56,6 +66,25 @@ TARGET_HOME=${FM_HOME:?FM_HOME is required}
 CONTROL_STATE="$TARGET_HOME/state/parent-route"
 CONTROL_DATA="$TARGET_HOME/data/.parent-route"
 REMOTE_HERDR_SESSION=fm-remote
+
+# A retire of a home that is already gone has to be decided before the
+# libraries below are sourced. Those libraries create $FM_HOME/state while
+# loading, which would recreate this home and make the absence look like an
+# unsafe empty directory. The parent then cannot finish with --force.
+if [ "${1:-}" = retire ] && [ ! -e "$TARGET_HOME" ] && [ ! -L "$TARGET_HOME" ]; then
+  case "${2:-}" in
+    ''|*[!A-Za-z0-9._-]*)
+      printf 'error: invalid secondmate id: %s\n' "${2:-}" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$#" -gt 3 ] || { [ "$#" -eq 3 ] && [ "$3" != --force ]; }; then
+    printf 'error: invalid retire arguments\n' >&2
+    exit 2
+  fi
+  printf 'already-retired: %s\n' "$2"
+  exit 0
+fi
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
@@ -128,15 +157,19 @@ state_value() { # <id>; prints recovery-grade state
 }
 
 print_route() { # <id>
-  local id=$1 harness traceparent
+  local id=$1 harness model effort traceparent
   remote_endpoint_require "$id"
   harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
+  model=$(fm_meta_get "$REMOTE_ENDPOINT_META" model)
+  effort=$(fm_meta_get "$REMOTE_ENDPOINT_META" effort)
   traceparent=$(fm_meta_get "$REMOTE_ENDPOINT_META" traceparent)
   printf 'schema=fm-remote-secondmate-control.v1\n'
   printf 'backend=%s\n' "$REMOTE_ENDPOINT_BACKEND"
   printf 'target=%s\n' "$REMOTE_ENDPOINT_TARGET"
   printf 'herdr_session=%s\n' "$REMOTE_HERDR_SESSION"
   printf 'harness=%s\n' "$harness"
+  printf 'model=%s\n' "$model"
+  printf 'effort=%s\n' "$effort"
   [ -z "$traceparent" ] || printf 'traceparent=%s\n' "$traceparent"
 }
 
@@ -251,6 +284,13 @@ cmd_relaunch() {
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
     FM_SKIP_SECONDMATE_SYNC=1 \
     "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}"
+  # A parent tracking this route needs the identity the relaunch actually
+  # produced, not the one it asked for, so it can republish its own record the
+  # same way cmd_launch's caller already does. Reading it back from the
+  # endpoint's own republished metadata - rather than trusting these argv
+  # values - is what makes that record correct even when relaunch resolved
+  # "default" against a configured pin this call never saw.
+  print_route "$id"
 }
 
 cmd_send() {
@@ -395,7 +435,7 @@ cmd_update() {
 }
 
 cmd_retire() {
-  local id=$1 force=${2:-} rc
+  local id=$1 force=${2:-} rc=0 pin summary record
   validate_id "$id"
   validate_home "$id" yes || rc=$?
   if [ "${rc:-0}" -eq 2 ]; then
@@ -406,17 +446,42 @@ cmd_retire() {
   remote_endpoint_require "$id"
   FM_HOME="$TARGET_HOME" FM_ROOT_OVERRIDE="$FM_ROOT" FM_STATE_OVERRIDE="$TARGET_HOME/state" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" "$SCRIPT_DIR/fm-guard.sh" || true
+  # STATE/DATA are redirected into the home being removed. Pin the obligation
+  # and the bounded summary outside that home, then print both so the calling
+  # parent can store them in the home that actually sweeps.
+  pin=$(mktemp -d "${TMPDIR:-/tmp}/fm-retire-pin.XXXXXX") || die "cannot stage the retirement pin"
+  rc=0
   if [ -n "$force" ]; then
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_RETIRE_STATE_DIR="$pin/state" FM_RETIRE_SUMMARY_DIR="$pin/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
-      "$SCRIPT_DIR/fm-teardown.sh" "$id" --force
+      "$SCRIPT_DIR/fm-teardown.sh" "$id" --force || rc=$?
   else
     FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
       FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_RETIRE_STATE_DIR="$pin/state" FM_RETIRE_SUMMARY_DIR="$pin/data" \
       FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_TEARDOWN_GUARD_DONE=1 \
-      "$SCRIPT_DIR/fm-teardown.sh" "$id"
+      "$SCRIPT_DIR/fm-teardown.sh" "$id" || rc=$?
   fi
+  summary="$pin/data/$id/retirement.md"
+  record="$pin/state/$id.home-retire"
+  if [ -f "$summary" ] && [ ! -L "$summary" ]; then
+    printf 'FM_RETIRE_SUMMARY_BEGIN\n'
+    cat -- "$summary"
+    printf 'FM_RETIRE_SUMMARY_END\n'
+  fi
+  if [ -f "$record" ] && [ ! -L "$record" ]; then
+    printf 'FM_RETIRE_RECORD_BEGIN\n'
+    cat -- "$record"
+    printf 'FM_RETIRE_RECORD_END\n'
+  fi
+  rm -rf -- "$pin"
+  if [ -e "$TARGET_HOME" ] || [ -L "$TARGET_HOME" ]; then
+    echo "error: remote home $TARGET_HOME remains after retirement" >&2
+    return 1
+  fi
+  return "${rc:-0}"
 }
 
 case "${1:-}" in
