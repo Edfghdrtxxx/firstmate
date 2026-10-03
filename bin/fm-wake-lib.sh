@@ -1091,9 +1091,14 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
+# Block until this process holds lockdir. A missing parent directory is not a
+# held lock: waiting cannot succeed, and a torn-down state directory must not
+# leave the caller spinning. Return 1 in that case so the caller can exit.
 fm_lock_acquire_wait() {
-  local lockdir=$1
+  local lockdir=$1 parent
+  parent=$(dirname -- "$lockdir")
   while ! fm_lock_try_acquire "$lockdir"; do
+    [ -d "$parent" ] || return 1
     sleep 0.1
   done
 }
