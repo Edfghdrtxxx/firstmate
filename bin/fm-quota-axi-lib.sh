@@ -146,14 +146,15 @@ fm_quota_single_provider_table() {
 }
 
 fm_quota_single_provider_for_harness() {
-  local harness provider
+  local harness provider match=
+  # Drain the whole table: returning mid-read SIGPIPEs
+  # fm_quota_single_provider_table's printf, which leaks "write error:
+  # Broken pipe" onto the caller's stderr.
   while read -r harness provider; do
-    if [ "$harness" = "$1" ]; then
-      printf '%s\n' "$provider"
-      return 0
-    fi
+    [ "$harness" = "$1" ] && [ -z "$match" ] && match=$provider
   done < <(fm_quota_single_provider_table)
-  return 1
+  [ -n "$match" ] || return 1
+  printf '%s\n' "$match"
 }
 
 fm_quota_provider_for_harness() {
