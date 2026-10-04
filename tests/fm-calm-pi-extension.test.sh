@@ -88,9 +88,10 @@ find_chrome() {
 # every attempt fails, print the Chrome binary, its version, the installed Pi
 # version, and each attempt's exit status, stderr tail, and whether the helper
 # timed the attempt out - when it did, the exit status is only this helper's own
-# kill signal. The extra flags remove Chrome's background-network and /dev/shm
-# dependencies, which are the start-up surfaces that fail on a runner; neither
-# changes the rendered DOM of a local file.
+# kill signal. The extra flags remove Chrome's background-network, /dev/shm,
+# and OS keychain dependencies (mock keychain and basic password store suppress
+# the macOS "Keychain Not Found" prompt on fresh profiles); neither changes the
+# rendered DOM of a local file.
 render_export_dom() {
   local chrome=$1 source_file=$2 out_file=$3 pi_version=$4
   local attempt pid status wait_count wait_limit reap_wait log profile report timed_out
@@ -4193,7 +4194,7 @@ JSON
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-o
   wait_for_text "$expanded_snapshot" "escape to interrupt" \
     || fail "Ctrl+O did not retain Pi's ordinary startup and tool expansion behavior"
-  # The expansion redraw lands a frame or two after the footer hint, so wait for the
+  # The expansion redraw lands a frame or two after the startup header, so wait for the
   # tool output this block actually asserts instead of assuming one implies the other.
   wait_for_text "$expanded_snapshot" "CALM_E2E_OUTPUT" \
     || fail "ordinary Ctrl+O expansion hid tool activity while calm mode was off"
