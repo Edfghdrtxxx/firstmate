@@ -1,0 +1,15 @@
+=== Scenario 2: Watcher Signal Triage in Spaced Home Directory ===
+Timestamp: 2026-10-04T01:20:51Z
+Home Directory: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm spaced test.VUARBT/firstmate spaced home
+
+--- Step 1: Initialize status file and launch real fm-watch.sh in background ---
+Launched bin/fm-watch.sh with PID: 34962
+--- Step 2: Append actionable decision signal ---
+Appended 'needs-decision [key=dec-1]: captain must approve release' to /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm spaced test.VUARBT/firstmate spaced home/state/task.status
+--- Step 3: Wait for watcher to detect signal and exit ---
+Watcher exited with status: 0
+
+--- Step 4: Inspect Watcher Log ---
+signal: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm spaced test.VUARBT/firstmate spaced home/state/task.status
+
+PASS: bin/fm-watch.sh successfully surfaced signal with full spaced path: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm spaced test.VUARBT/firstmate spaced home/state/task.status

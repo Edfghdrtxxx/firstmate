@@ -1,0 +1,14 @@
+=== Scenario 4: Away Supervisor Idle Nudge Live Validation ===
+Timestamp: 2026-10-04T01:23:13Z
+Test Lab: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-test-daemon.a2LRAj
+
+--- Step 1: Active Away Mode with Idle Supervisor beyond Threshold ---
+PASS: Idle reminder was queued when supervisor remained idle in away mode.
+Queued content:
+reminder: captain believes you, you must be justified when you stop. Check it out.
+
+--- Step 2: Away Mode Inactive (.afk absent) ---
+PASS: No reminder queued when away mode is inactive.
+
+--- Step 3: Disabled by FM_IDLE_NUDGE_SECS=0 ---
+PASS: No reminder queued when FM_IDLE_NUDGE_SECS=0 disables the reminder.

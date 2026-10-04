@@ -1,0 +1,17 @@
+=== Scenario 1: Quota Chooser Live CLI Validation ===
+Timestamp: 2026-10-04T01:20:45Z
+
+--- Step 1: Valid Positive Candidate Selection ---
+Command: bin/fm-quota-choose.sh --snapshot snapshot.json --candidate claude:default
+Output: claude default
+Exit code: 0
+PASS: Successfully selected claude default with positive quota
+
+--- Step 2: Trailing Unsupported Harness Rejection ---
+Command: bin/fm-quota-choose.sh --snapshot snapshot.json --candidate claude:default --candidate rovo:default
+Output: error: unknown harness: rovo
+PASS: Successfully rejected unsupported harness 'rovo' with exact error message and no broken pipe leak
+
+--- Step 3: Stress Testing (50 iterations) for SIGPIPE / Broken Pipe Leaks ---
+50 iterations completed. Broken pipe occurrences: 0
+PASS: Zero broken pipe leaks detected across all 50 iterations.

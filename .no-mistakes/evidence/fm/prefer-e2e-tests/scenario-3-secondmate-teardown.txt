@@ -1,0 +1,53 @@
+=== Scenario 3: Secondmate Teardown & Retirement Hardening Live Validation ===
+Timestamp: 2026-10-04T01:21:58Z
+Marked Lab Home: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-lab.fVQ3ch
+Peer Subhomes Base: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-subhomes.zxFOJ4
+
+--- Subscenario 3A: Clean Teardown and Retirement Summary Archiving ---
+teardown mate-alpha complete (window firstmate:fm-mate-alpha, worktree /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-subhomes.zxFOJ4/subhome-alpha)
+fm-teardown.sh exit code: 0
+PASS: Retirement summary was successfully archived at: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-lab.fVQ3ch/data/mate-alpha/retirement.md
+--- Retirement Summary Contents ---
+# Retirement summary: mate-alpha
+
+Secondmate mate-alpha retired 2026-10-04 09:22:00 +0800. Its home was /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-subhomes.zxFOJ4/subhome-alpha.
+This bounded summary preserves the private state the home held before removal: queued work, open holds, learnings, residual uncertainties, and report/PR links.
+
+## Queued and in-flight work
+
+- [ ] task-101 - ongoing database migration
+- [ ] task-102 - follow up cache invalidation
+
+## Open captain holds
+
+
+### Learnings (data/learnings.md)
+
+Observed lock contention pattern under high load
+
+### Residual uncertainties (data/intake-residuals.md)
+
+(none)
+
+### Charter (data/charter.md)
+
+(none)
+
+### Report artifacts
+
+
+
+### PR links
+
+
+-----------------------------------
+PASS: Retired secondmate home directory was safely removed.
+
+--- Subscenario 3B: Adversarial Guard: Refusal on Symlinked Retirement Directory ---
+Teardown output: fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-lab.fVQ3ch
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+REFUSED: retirement summary directory is unsafe: /var/folders/_p/hsgv3s8937b_3dc1wlgml4kw0000gn/T//fm-lab.fVQ3ch/data/mate-unsafe
+error: could not record the retirement summary for mate-unsafe; preserving the secondmate home and route
+PASS: Teardown refused on symlinked retirement summary directory as expected.
+PASS: Unsafe subhome was preserved upon refusal.
+PASS: External symlink target directory was protected from modification.
