@@ -105,11 +105,6 @@ export function installCalmOperationalUserLayout(): void {
     override render(width: number): string[] {
       if (patch.hidesOperationalInput()) return [];
       const lines = super.render(width);
-      const expandedDensity =
-        (globalThis as { [key: symbol]: boolean | undefined })[
-          Symbol.for("firstmate:calm-expanded-user-density")
-        ] === true;
-      if (expandedDensity) return lines;
       return this.hasLeadingSpacer ? ["", ...lines] : lines;
     }
   }

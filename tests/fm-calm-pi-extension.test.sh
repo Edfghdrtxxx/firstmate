@@ -88,9 +88,10 @@ find_chrome() {
 # every attempt fails, print the Chrome binary, its version, the installed Pi
 # version, and each attempt's exit status, stderr tail, and whether the helper
 # timed the attempt out - when it did, the exit status is only this helper's own
-# kill signal. The extra flags remove Chrome's background-network and /dev/shm
-# dependencies, which are the start-up surfaces that fail on a runner; neither
-# changes the rendered DOM of a local file.
+# kill signal. The extra flags remove Chrome's background-network, /dev/shm,
+# and OS keychain dependencies (mock keychain and basic password store suppress
+# the macOS "Keychain Not Found" prompt on fresh profiles); neither changes the
+# rendered DOM of a local file.
 render_export_dom() {
   local chrome=$1 source_file=$2 out_file=$3 pi_version=$4
   local attempt pid status wait_count wait_limit reap_wait log profile report timed_out
@@ -123,6 +124,8 @@ render_export_dom() {
       "$chrome" \
       ${profile_arg[@]+"${profile_arg[@]}"} \
       --headless=new \
+      --use-mock-keychain \
+      --password-store=basic \
       --disable-gpu \
       --no-sandbox \
       --disable-dev-shm-usage \
@@ -4176,7 +4179,7 @@ TS
 {"type":"message","id":"a0000016","parentId":"a0000015","timestamp":"$now","message":{"role":"assistant","content":[{"type":"text","text":"The deterministic tool example is complete."}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-5","usage":{"input":2,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":3,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":16}}
 JSON
 
-  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 80 \
+  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 200 \
     "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 30"
   wait_for_text "$default_snapshot" "The deterministic tool example is complete." \
     || fail "Pi calm E2E did not reach the restored session transcript"
@@ -4191,7 +4194,7 @@ JSON
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" C-o
   wait_for_text "$expanded_snapshot" "escape to interrupt" \
     || fail "Ctrl+O did not retain Pi's ordinary startup and tool expansion behavior"
-  # The expansion redraw lands a frame or two after the footer hint, so wait for the
+  # The expansion redraw lands a frame or two after the startup header, so wait for the
   # tool output this block actually asserts instead of assuming one implies the other.
   wait_for_text "$expanded_snapshot" "CALM_E2E_OUTPUT" \
     || fail "ordinary Ctrl+O expansion hid tool activity while calm mode was off"
@@ -4781,7 +4784,7 @@ JS
     active_screen_wait=$((active_screen_wait + 1))
   done
   [ "$(cat "$home/config/calm")" = on ] || fail "Calm was not restored before the persistence restart"
-  tmux -L "$TMUX_SOCKET" resize-window -t "$TMUX_SESSION" -x 180 -y 80
+  tmux -L "$TMUX_SOCKET" resize-window -t "$TMUX_SESSION" -x 180 -y 200
 
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" -l "/quit"
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" M-s
@@ -4789,7 +4792,7 @@ JS
     || fail "Pi did not exit cleanly before the Calm persistence restart"
   tmux -L "$TMUX_SOCKET" kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
-  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 80 \
+  tmux -L "$TMUX_SOCKET" new-session -d -s "$TMUX_SESSION" -x 180 -y 200 \
     "cd '$project' && env FM_HOME='$home' PI_CODING_AGENT_DIR='$config' FM_OPERATIONAL_INPUT_SCRIPT='$OPERATIONAL_INPUT' PI_OFFLINE=1 pi --approve --no-skills --no-prompt-templates --no-context-files --session '$session_file'; rc=\$?; printf '\nPI_EXIT=%s\n' \"\$rc\"; sleep 30"
   wait_for_text "$restarted_snapshot" "CALM_WORKING_E2E_RESPONSE" \
     || fail "Pi did not restore the persisted session after restart"
