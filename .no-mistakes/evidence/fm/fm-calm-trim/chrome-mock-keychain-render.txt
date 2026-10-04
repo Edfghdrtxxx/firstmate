@@ -1,0 +1,8 @@
+=== Chrome Invocation Test ===
+Chrome executable: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+Chrome version: Google Chrome 154.0.8037.95 
+OS: Darwin 25.6.0 arm64
+Testing headless render with --use-mock-keychain and --password-store=basic flags...
+SUCCESS: DOM rendered in 1s without macOS Keychain dialog prompt
+Render report: 
+Rendered DOM size:      447 bytes
