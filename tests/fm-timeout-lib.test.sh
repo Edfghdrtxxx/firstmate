@@ -64,6 +64,27 @@ test_passes_the_command_status_and_output_through() {
   pass "fm_exec_timed passes a command's status and output through unchanged"
 }
 
+# Stock macOS /bin/bash 3.2 has no BASHPID. The library runs under set -u, so
+# expanding $BASHPID aborted every fm_exec_timed call. bin/fm-timeout-lib.sh is
+# sourced, never executed; bin/fm-lint.sh --internal-timed is the shipped
+# re-entry that calls fm_exec_timed as a real process. The public
+# FM_LINT_REQUIRE_BOUNDS probe also reaches it, then refuses on macOS because
+# ulimit -v is unenforceable, so it cannot observe a successful run here.
+test_fm_exec_timed_runs_a_command_under_stock_macos_bash() {
+  local dir out rc=0
+  [ -x /bin/bash ] || { pass "fm_exec_timed under /bin/bash skipped without /bin/bash"; return 0; }
+  dir="$TMP_ROOT/bash32"
+  mkdir -p "$dir"
+  out=$(FM_LINT_INTERNAL=1 /bin/bash "$ROOT/bin/fm-lint.sh" \
+    --internal-timed 5 1 /bin/echo ran 2>"$dir/err") || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm_exec_timed under /bin/bash did not run the command (rc=$rc): $(cat "$dir/err")"
+  [ "$out" = ran ] || fail "fm_exec_timed under /bin/bash lost the command output ('$out')"
+  if grep -q 'unbound variable' "$dir/err"; then
+    fail "fm_exec_timed under /bin/bash hit an unbound variable: $(cat "$dir/err")"
+  fi
+  pass "fm_exec_timed runs a command under /bin/bash without BASHPID unbound"
+}
+
 # A command that honors TERM ends at the bound, long before the grace would
 # have forced it, and is gone afterwards.
 test_term_ends_a_cooperative_command_at_the_bound() {
@@ -109,7 +130,7 @@ test_the_bound_replaces_the_calling_shell() {
     rm -f "$dir/caller" "$dir/parent"
     (
       . "$ROOT/bin/fm-timeout-lib.sh"
-      printf '%s\n' "$BASHPID" > "$dir/caller"
+      printf '%s\n' "${BASHPID:-$(exec /bin/sh -c 'printf "%s\n" "$PPID"')}" > "$dir/caller"
       PATH=$path fm_exec_timed 5 1 bash -c 'echo "$PPID" > "$1"' _ "$dir/parent"
     ) || fail "the bounded probe failed under PATH=$path"
     caller=$(cat "$dir/caller")
@@ -211,7 +232,7 @@ test_an_owner_that_dies_during_startup_ends_the_command() {
   PATH=$PERL_ONLY bash -c '
     . "$1/bin/fm-timeout-lib.sh"
     (
-      echo "$BASHPID" > "$2/watchdog"
+      /bin/sh -c "echo \"\$PPID\"" > "$2/watchdog"
       while kill -0 "$$" 2>/dev/null; do sleep 0.05; done
       fm_exec_timed 60 1 bash -c "exec sleep 300"
     ) >/dev/null 2>&1 &
@@ -328,6 +349,7 @@ test_run_timed_passes_a_natural_exit_through_a_fired_bound() {
 }
 
 test_passes_the_command_status_and_output_through
+test_fm_exec_timed_runs_a_command_under_stock_macos_bash
 test_run_timed_reports_the_bound_when_the_wrapper_records_a_signal_death
 test_run_timed_passes_a_natural_exit_through_a_fired_bound
 test_term_ends_a_cooperative_command_at_the_bound
