@@ -15,6 +15,10 @@
 #     A captain-relevant status must deliver exactly ONE sentinel-prefixed,
 #     single-line digest with no duplicate or spurious user submission.
 #
+#   Scenario E (reply to a firstmate instruction): routine progress stays
+#     quiet, while a worker's first status after an instruction sent through
+#     the real fm-send is delivered exactly once.
+#
 # Isolation: all test tmux runs on a dedicated socket (tmux -L afk-e2e-<pid>).
 # A tmux shim first on PATH redirects the daemon's bare `tmux` calls to the
 # private socket. The daemon points at a throwaway state dir (FM_STATE_OVERRIDE)
@@ -460,9 +464,63 @@ test_scenario_d() {
   pass "Scenario D: a claude primary receives one plain doorbell whose record the away-mode return check reads as internal"
 }
 
+# --- Scenario E: a worker's reply to a firstmate instruction is delivered ----
+# A worker answers a question with a nonterminal verb, so its status reads like
+# routine progress. Routine progress must stay quiet; the first status after an
+# instruction sent through the real fm-send must reach the supervisor pane
+# once; the progress after that must stay quiet again.
+
+test_scenario_e() {
+  local now digests
+  reset_state
+  rm -rf "$STATE_DIR/fake-c1.inbox"
+  printf 'window=supervisor:fm-fake-c1\nkind=scout\nharness=claude\n' > "$STATE_DIR/fake-c1.meta"
+  afk_enter "$STATE_DIR"
+  start_daemon
+
+  now=$(date +%s)
+  echo "working [at=$now]: phase one complete" >> "$STATE_DIR/fake-c1.status"
+  sleep 6
+  if grep -q 'Supervisor escalate' "$LOG_FILE"; then
+    fail "Scenario E: routine progress was delivered: $(cat "$LOG_FILE")"
+  fi
+
+  PATH="$TMUX_SHIM_DIR:$PATH" FM_HOME="$STATE_DIR" FM_STATE_OVERRIDE="$STATE_DIR" \
+    "$ROOT/bin/fm-send.sh" fake-c1 "Q1: which option should the patch take?" \
+    >"$STATE_DIR/send.out" 2>&1 \
+    || fail "Scenario E: fm-send did not record the question: $(cat "$STATE_DIR/send.out")"
+  [ -f "$STATE_DIR/fake-c1.inbox/001.msg" ] \
+    || fail "Scenario E: fm-send left no steering-inbox record"
+  mv "$STATE_DIR/fake-c1.inbox/001.msg" "$STATE_DIR/fake-c1.inbox/handled/"
+  sleep 1
+  now=$(date +%s)
+  {
+    echo "working [at=$now]: answered Q1 (answers.md): option B"
+    echo "paused [at=$now]: idle, waiting for firstmate questions"
+  } >> "$STATE_DIR/fake-c1.status"
+  sleep 6
+  grep 'Supervisor escalate' "$LOG_FILE" | grep -q 'answered Q1 (answers.md): option B' \
+    || fail "Scenario E: the worker's reply never reached the supervisor pane: $(cat "$LOG_FILE")"
+
+  now=$(date +%s)
+  echo "working [at=$now]: phase two complete" >> "$STATE_DIR/fake-c1.status"
+  sleep 6
+  digests=$(grep -c 'Supervisor escalate' "$LOG_FILE" || true)
+  [ "$digests" -eq 1 ] \
+    || fail "Scenario E: expected exactly one digest, got $digests: $(cat "$LOG_FILE")"
+  if grep -q 'phase two complete' "$LOG_FILE"; then
+    fail "Scenario E: progress after the reply was delivered: $(cat "$LOG_FILE")"
+  fi
+
+  stop_daemon
+  rm -rf "$STATE_DIR/fake-c1.inbox" "$STATE_DIR/fake-c1.meta"
+  pass "Scenario E: a reply to a firstmate instruction is delivered once; routine progress stays quiet"
+}
+
 test_scenario_a
 test_scenario_b
 test_scenario_c
 test_scenario_d
+test_scenario_e
 
 echo "all e2e injection tests passed"

@@ -375,6 +375,42 @@ _collapse_newlines() {  # <text>
 # field for "self" is informational (logged); for "escalate" it is the pre-read
 # summary firstmate would otherwise have to re-read.
 
+# Reach the steering-inbox owner without loading it for every consumer that
+# sources this file for its pure functions. fm_super_main loads it once so the
+# classification subshells inherit it.
+daemon_task_inbox_helpers() {  # <state>
+  command -v fm_task_inbox_newest_instruction >/dev/null 2>&1 && return 0
+  # shellcheck source=/dev/null
+  FM_STATE_OVERRIDE="$1" . "$FM_DAEMON_DIR/fm-task-inbox-lib.sh"
+}
+
+# The status-span record every daemon consumer classifies, in the shape and
+# return codes of status_span_first_actionable_record. One more span is
+# actionable here: the worker's first status since firstmate's newest steering
+# instruction (status_span_reply_events). That status is the reply to it, and
+# it usually carries only working: or paused:, so without this the answer to a
+# question firstmate asked would be self-handled as routine progress.
+daemon_status_span_record() {  # <status-file> <state> <task>
+  local f=$1 state=$2 task=$3 start record rc endpoint rec asked events
+  start=$(status_seen_offset "$state" "$task")
+  record=$(status_span_first_actionable_record "$f" "$start")
+  rc=$?
+  if [ "$rc" -eq 1 ] && [ -n "$record" ]; then
+    endpoint=${record%%$'\t'*}
+    case "$start" in ''|*[!0-9]*) start=0 ;; esac
+    [ "$start" -le "$endpoint" ] || start=0
+    if [ "$start" -lt "$endpoint" ] && daemon_task_inbox_helpers "$state" \
+       && rec=$(fm_task_inbox_newest_instruction "$state" "$task") \
+       && asked=$(fm_utc_iso_to_epoch "$(fm_task_inbox_at "$rec")") \
+       && events=$(status_span_reply_events "$f" "$start" "$endpoint" "$asked"); then
+      record="${record}"$'\t'"reply to firstmate instruction ${rec##*/}: ${events}"
+      rc=0
+    fi
+  fi
+  printf '%s' "$record"
+  return "$rc"
+}
+
 classify_signal() {  # <reason-after-colon> <state>
   local reason=$1 state=$2 f last event record rest endpoint ident rc distilled="" rel="" seen_rel="" task sig marker
   local f_list
@@ -383,8 +419,7 @@ classify_signal() {  # <reason-after-colon> <state>
     case "$f" in *.status) ;; *) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     task=$(basename "$f"); task="${task%.status}"
-    record=$(status_span_first_actionable_record "$f" \
-      "$(status_seen_offset "$state" "$task")")
+    record=$(daemon_status_span_record "$f" "$state" "$task")
     rc=$?
     [ "$rc" -eq 1 ] && [ -z "$record" ] && continue
     if [ "$rc" -eq 2 ]; then
@@ -438,8 +473,7 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
   local win=$1 state=$2 record=${3-} rc=${4-} task last declared event rest
   task=$(window_to_task "$win" "$state")
   if [ -z "$rc" ]; then
-    record=$(status_span_first_actionable_record "$state/$task.status" \
-      "$(status_seen_offset "$state" "$task")")
+    record=$(daemon_status_span_record "$state/$task.status" "$state" "$task")
     rc=$?
   fi
   last=$(last_status_line "$state/$task.status")
@@ -1415,8 +1449,7 @@ housekeeping() {  # <state>
       [ -e "$f" ] || [ -L "$f" ] || continue
       [ "$f" = "$exclude" ] && continue
       task=$(basename "$f"); task="${task%.status}"
-      record=$(status_span_first_actionable_record "$f" \
-        "$(status_seen_offset "$state" "$task")")
+      record=$(daemon_status_span_record "$f" "$state" "$task")
       rc=$?
       if [ "$rc" -eq 2 ]; then
         ident=$(status_observed_signature "$f")
@@ -1631,8 +1664,7 @@ handle_wake() {  # <reason> <state>
               case "$arg" in *" ("*) stale_detail="${arg#*" ("}"; arg="${arg%% \(*}" ;; esac
               task=$(window_to_task "$arg" "$state")
               if [ -n "$task" ]; then
-                span_record=$(status_span_first_actionable_record "$state/$task.status" \
-                  "$(status_seen_offset "$state" "$task")")
+                span_record=$(daemon_status_span_record "$state/$task.status" "$state" "$task")
                 span_rc=$?
                 case "$span_rc" in
                   0|1)
@@ -1817,6 +1849,7 @@ fm_super_main() {
   # Export FM_STATE_OVERRIDE so the lib resolves the same state dir.
   # shellcheck source=bin/fm-wake-lib.sh
   FM_STATE_OVERRIDE="$STATE" . "$FM_DAEMON_DIR/fm-wake-lib.sh"
+  daemon_task_inbox_helpers "$STATE"
 
   local WATCH="$FM_DAEMON_DIR/fm-watch.sh"
   local LOG="$STATE/.supervise-daemon.log"

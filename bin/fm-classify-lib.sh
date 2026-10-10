@@ -2465,6 +2465,49 @@ status_span_has_actionable() {  # <status-file> <start-offset>
   status_span_first_actionable_record "$1" "${2:-0}" > /dev/null
 }
 
+# Print the nonblank lines of the status span [<start-offset>, <end-offset>)
+# joined with ` ; ` and return 0 when that span is the worker's first status
+# since an instruction recorded at <instruction-epoch>; return 1 otherwise.
+# A worker answers a question with whatever verb fits, usually working: or
+# paused:, so no verb identifies a reply. Position does: the line before the
+# span is not stamped later than the instruction, and the span holds a line the
+# worker wrote at or after it. A resolved or captain-held line is this home's
+# own decision bookkeeping and never counts as that line.
+# An unknown emission time on either side counts toward a reply, so uncertainty
+# surfaces one extra status rather than hiding an answer.
+# Only the first status after an instruction qualifies; a later answer needs
+# its own terminal verb or a new instruction.
+status_span_reply_events() {  # <status-file> <start-offset> <end-offset> <instruction-epoch>
+  local f=$1 start=$2 end=$3 asked=$4 back line verb epoch prev='' events='' replied=1 resolve held
+  case "$start:$end:$asked" in *[!0-9:]*|:*|*::*|*:) return 1 ;; esac
+  [ "$start" -lt "$end" ] || return 1
+  if [ "$start" -gt 0 ]; then
+    back=$start
+    [ "$back" -le 8192 ] || back=8192
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in *[![:space:]]*) prev=$line ;; esac
+    done <<EOF
+$(_fm_status_read_span "$f" "$((start - back))" "$back" 2>/dev/null)
+EOF
+    _fm_status_at_epoch "$prev" epoch && [ "$epoch" -gt "$asked" ] && return 1
+  fi
+  resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    events="${events}${events:+ ; }${line}"
+    case "$line" in *:*) status_line_verb "$line" verb ;; *) verb='' ;; esac
+    case "$verb" in "$resolve"|"$held") continue ;; esac
+    if ! _fm_status_at_epoch "$line" epoch || [ "$epoch" -ge "$asked" ]; then
+      replied=0
+    fi
+  done <<EOF
+$(_fm_status_read_span "$f" "$start" "$((end - start))" 2>/dev/null)
+EOF
+  [ "$replied" -eq 0 ] || return 1
+  printf '%s' "$events"
+}
+
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
 # from bin/fm-crew-state.sh's one authoritative current-state line
 # ("state: <s> · source: <src> · <detail>"). Prints exactly one token:

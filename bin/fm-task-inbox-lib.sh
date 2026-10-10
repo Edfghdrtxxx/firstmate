@@ -85,7 +85,8 @@
 #
 # fm_task_inbox_ring requires bin/fm-backend.sh's dispatch (sourced below); the
 # other helpers are dependency-light. Sourced by bin/fm-send.sh, bin/fm-watch.sh,
-# and tests. No side effects on source beyond its sourced libraries.
+# bin/fm-supervise-daemon.sh (to recognize a worker's reply), and tests. No side
+# effects on source beyond its sourced libraries.
 #
 # Tunables (env):
 #   FM_TASK_INBOX_GRACE_SECS   default 90; delivery-attempt grace and spacing
@@ -424,6 +425,30 @@ fm_task_inbox_oldest_unhandled() {  # <state-dir> <task-id>
   done
   [ -n "$best" ] || return 1
   printf '%s' "$best"
+}
+
+# Newest ordinary record, unhandled or acknowledged: the latest instruction the
+# worker may still owe a status for. A fire-and-forget record expects none.
+fm_task_inbox_newest_instruction() {  # <state-dir> <task-id>
+  local dir best='' best_n=0 d f n
+  dir=$(fm_task_inbox_dir "$1" "$2")
+  for d in "$dir" "$dir/handled"; do
+    for f in "$d"/*.msg; do
+      [ -e "$f" ] || continue
+      n=$(fm_task_inbox_seq_of "${f##*/}") || continue
+      [ "$n" -gt "$best_n" ] || continue
+      fm_task_inbox_is_fire_and_forget "$f" && continue
+      best=$f
+      best_n=$n
+    done
+  done
+  [ -n "$best" ] || return 1
+  printf '%s' "$best"
+}
+
+# A record's enqueue time exactly as its header carries it.
+fm_task_inbox_at() {  # <record-path>
+  awk '$0 == "--" { exit } /^at=/ { print substr($0, 4); exit }' "$1" 2>/dev/null
 }
 
 # Owe a fire-and-forget record its one retry ring (see the header). A newer

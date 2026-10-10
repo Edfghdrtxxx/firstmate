@@ -3243,7 +3243,8 @@ fm_backend_herdr_rendered_busy_state() {  # <target> [harness] -> busy|idle|unkn
 # A missing read, a shorter suffix, or a paste placeholder followed by a
 # literal remainder does not press Enter: the composer is cleared back to
 # empty and the verdict is send-failed, or unknown when the clear cannot be
-# verified. Other harnesses skip this proof. Verified hazard
+# verified. Each send-failed refusal names its reason on stderr, so a caller
+# that keeps stderr can tell them apart. Other harnesses skip this proof. Verified hazard
 # (herdr-verification-p2.md "slash/$ autocomplete popup"): a `/`- or
 # `$`-prefixed send opens a completion popup within ~0.1s, exactly like tmux's
 # claude/codex popups, so the caller's <settle> before the first Enter matters
@@ -3440,8 +3441,9 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
   if [ "${identity%%$'\t'*}" = claude ]; then
     proof=1
     content=$(fm_backend_herdr_composer_content "$target") \
-      || { printf 'send-failed'; return 0; }
-    [ -z "${content//[$' \t\r\n\v\f']/}" ] || { printf 'send-failed'; return 0; }
+      || { echo "herdr submit: composer unreadable before typing, nothing typed" >&2; printf 'send-failed'; return 0; }
+    [ -z "${content//[$' \t\r\n\v\f']/}" ] \
+      || { echo "herdr submit: composer not empty before typing, nothing typed" >&2; printf 'send-failed'; return 0; }
   fi
   fm_backend_herdr_send_literal "$target" "$text" || { printf 'send-failed'; return 0; }
   sleep "$settle"
@@ -3449,6 +3451,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
     if ! content=$(fm_backend_herdr_composer_content "$target") \
       || ! fm_backend_herdr_composer_payload_shown "$text" "$content"; then
       if fm_backend_herdr_composer_clear "$target" "$text"; then
+        echo "herdr submit: composer did not show the typed text, cleared without Enter" >&2
         printf 'send-failed'
       else
         printf 'unknown'
@@ -3472,6 +3475,7 @@ fm_backend_herdr_send_text_submit() {  # <target> <text> <retries> <enter-sleep>
     elif [ "$enter_sent" -eq 0 ]; then
       i=$((i + 1))
       if [ "$i" -ge "$retries" ]; then
+        echo "herdr submit: Enter could not be sent after typing" >&2
         printf 'send-failed'
         return 0
       fi

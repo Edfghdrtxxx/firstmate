@@ -176,6 +176,7 @@ Classify each wake this way, applying the steering-inbox exception before status
   [`bin/fm-task-inbox-lib.sh`](../../../bin/fm-task-inbox-lib.sh) owns the busy budget and bookkeeping contract; `tests/fm-daemon.test.sh` covers this consumer boundary.
 - `signal` whose newly classified status span contains captain-relevant events -> escalate every event in source order.
   A nonterminal progress verb remains nonterminal even when its prose contains a legacy free-text token such as `PR ready`, `checks green`, `ready in branch`, or `merged`; only a bare legacy line with such a token escalates.
+  A span with no captain-relevant event still escalates, as `reply to firstmate instruction <record>`, when it is the worker's first status since firstmate's newest steering-inbox instruction to that task, because a worker answers a question with whatever verb fits and the answer would otherwise read as routine progress; `status_span_reply_events` in `bin/fm-classify-lib.sh` owns that test, and stale wakes and the heartbeat scan apply it too.
   Other signals with no captain-relevant event in the span -> self-handle.
 - `signal` or `stale` whose latest status declares a wait, either a `paused:` external wait or a verified `captain-held` transfer, tracks the pause rather than a wedge whether its pane reads idle or busy.
   An unreported captain-relevant event in the newly classified span still escalates immediately while the current declaration independently keeps the pause cadence.
