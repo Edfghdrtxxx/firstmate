@@ -602,7 +602,12 @@ test_lock_stale_steal_single_winner_under_concurrency() {
     pids="$pids $!"
     i=$((i + 1))
   done
-  IFS= read -r winner < "$gate"
+  # Bash 3.2 does not retry a FIFO open that a contender's exit (SIGCHLD)
+  # interrupts: it fails with "Interrupted system call", so retry the open.
+  i=0
+  until { IFS= read -r winner < "$gate"; } 2>/dev/null || [ "$i" -ge 200 ]; do
+    i=$((i + 1))
+  done
   [ "$winner" = "$waiter" ] || { kill "$waiter" 2>/dev/null || true; wait "$waiter" 2>/dev/null || true; }
   for pid in $pids; do
     [ "$pid" = "$winner" ] || wait "$pid" 2>/dev/null || true
