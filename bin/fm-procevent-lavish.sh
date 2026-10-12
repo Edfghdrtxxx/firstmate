@@ -526,7 +526,9 @@ cmd_terminal() {
 
 # Whether a completed result carries any queued content block at all. The
 # published response frames content as a top-level `prompts[N]{...}:` or
-# `feedback[N]{...}:` header whose rows are INDENTED, so this anchors on column
+# `feedback[N]{...}:` header whose rows are INDENTED, or, when the items carry
+# different fields, as a bare `prompts[N]:` header over indented `- field: value`
+# entries. This anchors on column
 # zero: an indented payload line is captain-supplied text and must never be able
 # to forge - or, here, to hide behind - a content header. Any recognized block
 # is content regardless of its declared count, while a malformed top-level
@@ -537,7 +539,7 @@ cmd_terminal() {
 # failed" is never proof that nothing was said.
 result_has_queued_content() {  # <result-file>
   awk '
-    /^(prompts|feedback)\[[0-9]+\]\{[^}]*\}:[[:space:]]*$/ {
+    /^(prompts|feedback)\[[0-9]+\](\{[^}]*\})?:[[:space:]]*$/ {
       verdict = "present"
       exit
     }
@@ -573,12 +575,49 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
+# The list layout of a queued block, shared by `read` and `answers` so the two
+# cannot disagree on it. TOON emits it, instead of a `prompts[N]{field,...}:`
+# table, when the items carry different fields: a bare `prompts[N]:` header, then
+# one `- field: value` entry per item with its other fields indented two deeper.
+# Only an entry's scalar fields are kept; a nested object such as `target:` is
+# skipped by indentation. Quoted values carry the same JSON-style escapes as a
+# table cell. Perl source, prepended to each reader's program.
+IFS= read -r -d '' LAVISH_LIST_PERL <<'PERL' || true
+use strict; use warnings;
+sub list_entries {  # \@indented-lines -> (\@field-hashes, $malformed-count)
+  my ($lines) = @_;
+  my (@entries, $entry, $entry_indent);
+  for my $line (@$lines) {
+    my ($spaces, $rest) = $line =~ /^( *)(.*)$/;
+    my $start = $rest =~ /^- /;
+    $entry_indent = length $spaces if !defined $entry_indent && $start;
+    next unless defined $entry_indent;
+    if ($start && length($spaces) == $entry_indent) {
+      push @entries, $entry = {};
+      $rest =~ s/^- +//;
+    } elsif (length($spaces) != $entry_indent + 2) {
+      next;
+    }
+    next unless $entry && $rest =~ /^([A-Za-z_][A-Za-z0-9_.-]*):[ ]+(.+?)\s*$/;
+    my ($key, $value) = ($1, $2);
+    if ($value =~ /^"((?:[^"\\]|\\.)*)"$/) {
+      $value = $1;
+      $value =~ s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge;
+    }
+    $entry->{$key} = $value unless exists $entry->{$key};
+  }
+  my @kept = grep { %$_ } @entries;
+  return (\@kept, scalar(@entries) - scalar(@kept));
+}
+PERL
+
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
 # card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
 # a `prompts[N]{field,...}:` header followed by exactly N indented CSV rows whose
 # quoted fields carry JSON-style escapes, so this reads the declared field ORDER
-# rather than assuming a fixed column, and takes only rows whose `tag` field is
+# rather than assuming a fixed column, or as a `prompts[N]:` list of N entries
+# (see LAVISH_LIST_PERL), and takes only rows whose `tag` field is
 # `choice`. A freeform `message` row is captain prose and is deliberately never a
 # source of decision keys. A row that does not carry both a slug-shaped `question`
 # and the versioned `selection` and `note` fields inside its `Context data:` block
@@ -592,25 +631,34 @@ cmd_choice_rows() {
   local selection=$1 file=${2-}
   [ -n "$file" ] || usage
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
-  perl -MJSON::PP -e '
+  perl -MJSON::PP -e "$LAVISH_LIST_PERL"'
     use strict; use warnings;
     my ($selection, $path) = @ARGV;
     open my $fh, "<", $path or exit 1;
-    my (@fields, $want, @rows);
+    my (@fields, $want, @rows, $list);
     while (my $line = <$fh>) {
-      if (!@fields) {
+      if (!@fields && !$list) {
+        if ($line =~ /^prompts\[(\d+)\]:\s*$/) {
+          ($want, $list) = ($1, 1);
+          next;
+        }
         next unless $line =~ /^prompts\[(\d+)\]\{([^}]*)\}:\s*$/;
         ($want, @fields) = ($1, split /,/, $2);
         next;
       }
       last unless $line =~ /^\s/;
-      last if @rows >= $want;
+      last if !$list && @rows >= $want;
       chomp $line;
       push @rows, $line;
     }
     close $fh;
-    my %seen;
-    my @choices;
+    my @records;
+    if ($list) {
+      my ($entries) = list_entries(\@rows);
+      @records = @$entries;
+      splice @records, $want if @records > $want;
+      @rows = ();
+    }
     for my $row (@rows) {
       $row =~ s/^\s+//;
       my @vals;
@@ -627,6 +675,12 @@ cmd_choice_rows() {
       }
       my %f;
       $f{$fields[$_]} = $vals[$_] for 0 .. $#fields;
+      push @records, \%f;
+    }
+    my %seen;
+    my @choices;
+    for my $record (@records) {
+      my %f = %$record;
       next unless defined $f{tag} && $f{tag} eq "choice";
       my $prompt = $f{prompt};
       next unless defined $prompt && $prompt =~ /Context data:\s*(\{.*\})/s;
@@ -713,19 +767,23 @@ cmd_read() {
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
   lifecycle=$(cmd_classify "$file")
   session_ended=$(session_field "$file" session_ended)
-  perl -e '
+  perl -e "$LAVISH_LIST_PERL"'
     use strict; use warnings;
     my ($path, $lifecycle, $session_ended) = @ARGV;
     open my $fh, "<", $path or exit 1;
-    my (@fields, $want, @rows);
+    my (@fields, $want, @rows, $list);
     while (my $line = <$fh>) {
-      if (!@fields) {
+      if (!@fields && !$list) {
+        if ($line =~ /^(?:prompts|feedback)\[(\d+)\]:\s*$/) {
+          ($want, $list) = ($1, 1);
+          next;
+        }
         next unless $line =~ /^(?:prompts|feedback)\[(\d+)\]\{([^}]*)\}:\s*$/;
         ($want, @fields) = ($1, split /,/, $2);
         next;
       }
       last unless $line =~ /^\s/;
-      last if defined($want) && @rows >= $want;
+      last if !$list && defined($want) && @rows >= $want;
       chomp $line;
       push @rows, $line;
     }
@@ -733,6 +791,14 @@ cmd_read() {
     $want = 0 unless defined $want;
     my @parsed;
     my $malformed = 0;
+    if ($list) {
+      # Every entry found is presented, so a count that disagrees with the
+      # declared one in either direction reads as incomplete.
+      my ($entries, $skipped) = list_entries(\@rows);
+      @parsed = @$entries;
+      $malformed = $skipped;
+      @rows = ();
+    }
     for my $row (@rows) {
       $row =~ s/^\s+//;
       my @vals;
