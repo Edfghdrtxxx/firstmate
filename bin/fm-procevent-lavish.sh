@@ -26,7 +26,10 @@
 #            otherwise CAPTAIN MESSAGE and captain_message_count. Declared and
 #            presented item counts,
 #            plus a completeness verdict, follow before all annotations so a
-#            partial read is obvious. Each annotation retains its element uid,
+#            partial read is obvious. Extra list entries past the declared
+#            count are dropped from the presented set, and from `answers`, so
+#            the two commands share one entry set; completeness is then no.
+#            Each annotation retains its element uid,
 #            selector, tag, and text. A non-choice freeform comment (`prompt`)
 #            is printed as its own field even when a selector is also present
 #            and even when that comment matches the element text, so typed
@@ -581,7 +584,9 @@ cmd_silent() {
 # one `- field: value` entry per item with its other fields indented two deeper.
 # Only an entry's scalar fields are kept; a nested object such as `target:` is
 # skipped by indentation. Quoted values carry the same JSON-style escapes as a
-# table cell. Perl source, prepended to each reader's program.
+# table cell. Extra entries past the declared count are dropped from the shared
+# set; a header/entry count mismatch is incomplete. Perl source, prepended to
+# each reader's program.
 IFS= read -r -d '' LAVISH_LIST_PERL <<'PERL' || true
 use strict; use warnings;
 sub list_entries {  # \@indented-lines -> (\@field-hashes, $malformed-count)
@@ -608,6 +613,13 @@ sub list_entries {  # \@indented-lines -> (\@field-hashes, $malformed-count)
   }
   my @kept = grep { %$_ } @entries;
   return (\@kept, scalar(@entries) - scalar(@kept));
+}
+sub list_declared {  # \@indented-lines, $want -> (\@field-hashes, $malformed-count, $found)
+  my ($lines, $want) = @_;
+  my ($entries, $skipped) = list_entries($lines);
+  my $found = scalar @$entries;
+  splice @$entries, $want if defined($want) && @$entries > $want;
+  return ($entries, $skipped, $found);
 }
 PERL
 
@@ -654,9 +666,8 @@ cmd_choice_rows() {
     close $fh;
     my @records;
     if ($list) {
-      my ($entries) = list_entries(\@rows);
+      my ($entries) = list_declared(\@rows, $want);
       @records = @$entries;
-      splice @records, $want if @records > $want;
       @rows = ();
     }
     for my $row (@rows) {
@@ -791,12 +802,15 @@ cmd_read() {
     $want = 0 unless defined $want;
     my @parsed;
     my $malformed = 0;
+    my $found;
     if ($list) {
-      # Every entry found is presented, so a count that disagrees with the
-      # declared one in either direction reads as incomplete.
-      my ($entries, $skipped) = list_entries(\@rows);
+      # Extra entries past the declared count are dropped so read and answers
+      # share the same set; a count that disagrees in either direction is
+      # incomplete.
+      my ($entries, $skipped, $found_count) = list_declared(\@rows, $want);
       @parsed = @$entries;
       $malformed = $skipped;
+      $found = $found_count;
       @rows = ();
     }
     for my $row (@rows) {
@@ -829,8 +843,9 @@ cmd_read() {
       $f{$fields[$_]} = $vals[$_] for 0 .. $#fields;
       push @parsed, \%f;
     }
+    $found = scalar @parsed unless defined $found;
     my $presented = scalar @parsed;
-    my $complete = ($presented == $want && !$malformed) ? "yes" : "no";
+    my $complete = ($found == $want && !$malformed) ? "yes" : "no";
     my @messages;
     my @annotations;
     for my $f (@parsed) {

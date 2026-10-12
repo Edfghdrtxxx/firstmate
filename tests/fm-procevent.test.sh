@@ -3492,6 +3492,63 @@ cat > "$READ" <<'EOF'
 session:
   file: /review.html
   status: feedback
+prompts[2]:
+  - uid: "1"
+    tag: td
+    text: "one"
+  - uid: "2"
+    tag: td
+    text: "two"
+  - uid: "3"
+    tag: td
+    text: "three"
+  - uid: "4"
+    prompt: "hidden-choice\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"mate-hidden-choice\",\n  \"selection\": \"YES-hidden\",\n  \"note\": \"\"\n}"
+    selector: form#ask1-form
+    tag: choice
+    text: hidden-choice
+EOF
+out=$(read_out) || fail "read failed on a long list-layout capture"
+assert_contains "$out" "declared_items: 2" "a long list-layout capture hid its declared count"
+assert_contains "$out" "presented_items: 2" "a long list-layout capture presented entries past the declared count"
+assert_contains "$out" "complete: no" "a long list-layout capture was certified as complete"
+assert_contains "$out" "| one" "a long list-layout capture dropped an in-range entry"
+assert_contains "$out" "| two" "a long list-layout capture dropped an in-range entry"
+assert_not_contains "$out" "| three" "a long list-layout capture presented an extra entry"
+assert_not_contains "$out" "tag: choice" "a long list-layout capture presented a choice past the declared count"
+assert_not_contains "$out" "hidden-choice" "a long list-layout capture presented a choice past the declared count"
+answers_out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") \
+  || fail "answers failed on a long list-layout capture"
+[ -z "$answers_out" ] || fail "answers returned a keyed choice from a list entry past the declared count: $answers_out"
+pass "read and answers drop extra list entries past the declared count, including a trailing choice"
+
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+prompts[0]:
+  - uid: "1"
+    prompt: "should-not-extract\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"mate-zero-choice\",\n  \"selection\": \"YES-zero\",\n  \"note\": \"\"\n}"
+    selector: form#ask1-form
+    tag: choice
+    text: should-not-extract
+EOF
+out=$(read_out) || fail "read failed on a prompts[0]: list with an entry"
+assert_contains "$out" "declared_items: 0" "a prompts[0]: list with an entry hid its declared count"
+assert_contains "$out" "presented_items: 0" "a prompts[0]: list with an entry presented the extra entry"
+assert_contains "$out" "complete: no" "a prompts[0]: list with an entry was certified as complete"
+assert_contains "$out" "ANNOTATIONS: (none)" "a prompts[0]: list with an entry presented the extra entry"
+assert_not_contains "$out" "tag: choice" "a prompts[0]: list presented a choice past the declared count"
+assert_not_contains "$out" "should-not-extract" "a prompts[0]: list presented a choice past the declared count"
+answers_out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") \
+  || fail "answers failed on a prompts[0]: list with an entry"
+[ -z "$answers_out" ] || fail "answers returned a keyed choice from a prompts[0]: extra entry: $answers_out"
+pass "read and answers ignore a choice after prompts[0]:"
+
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
   session_ended: true
   ended_by: user
 feedback[1]:
