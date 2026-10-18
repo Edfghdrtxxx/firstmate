@@ -3084,8 +3084,6 @@ printf 'session:\n  file: /a.html\n  status: feedback\nprompts[1]{tag,text}:\n  
 silent_says no "a freeform captain message is news"
 printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[1]{tag,text}:\n  "choice","late answer"\n' > "$SIL"
 silent_says no "an ended session still carrying content is never assumed empty"
-printf 'session:\n  file: /a.html\n  status: ended\n  ended_by: user\nprompts[1]:\n  - tag: choice\n    text: late answer\n' > "$SIL"
-silent_says no "an ended session still carrying list-layout content is never assumed empty"
 printf 'session:\n  file: /a.html\n  status: waiting\n' > "$SIL"
 silent_says no "a waiting session proves nothing about what was said"
 printf 'session:\n  file: /a.html\n  status: browser_disconnected\n' > "$SIL"
@@ -3390,176 +3388,146 @@ assert_contains "$out" "SESSION-ENDING MESSAGE: (none)" \
 assert_contains "$out" "ANNOTATIONS: (none)" "an empty board close invented annotations"
 pass "read distinguishes a feedback capture from an ended-with-nothing close"
 
-# TOON emits a list layout (`prompts[N]:` then `- field: value` entries) when
-# items carry different fields, including a nested `target:` object. Replay a
-# sanitized copy of a captured board that the tabular parser presented as empty.
+# Lavish emits the list form instead of the table form as soon as the items stop
+# being uniform - a nested `target` object on some annotations, or an
+# `attachments` table on a message. The shapes below are what its TOON encoder
+# produces for such items. Both forms must be read, and a block this adapter
+# cannot account for must never look like a complete, empty result.
 cat > "$READ" <<'EOF'
 session:
   file: /review.html
   status: feedback
 prompts[4]:
-  - uid: "5"
-    prompt: Does that mean XA conduces this performance degradation?
-    selector: "tr#row-c0 > td:nth-of-type(5)"
-    tag: td
-    text: "+1.651 pp +4,952 events"
-    target:
-      type: table-cell
-      selector: "tr#row-c0 > td:nth-of-type(5)"
-      rowLabel: C0 first XA
-      columnLabel: Minus stock RN
-      text: "+1.651 pp +4,952 events"
-  - uid: "7"
-    prompt: Why is it better? Is it statistical error?
-    selector: "tr#row-c3 > td:nth-of-type(5)"
-    tag: td
-    text: "+2.545 pp +7,635 events"
-    target:
-      type: table-cell
-      selector: "tr#row-c3 > td:nth-of-type(5)"
-      rowLabel: C3 best XA now
-      columnLabel: Minus stock RN
-      text: "+2.545 pp +7,635 events"
-  - uid: "8"
-    prompt: Agree. Keep hunting
-    selector: h2#s5
-    tag: h2
-    text: "5. My recommendation: YES"
-  - uid: "9"
-    prompt: "Captain's answer to ask 1 (hit line measured from the same-stem ResNet): YES-move-line-to-same-stem-RN\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"mate-hit-line-same-backbone\",\n  \"selection\": \"YES-move-line-to-same-stem-RN\",\n  \"note\": \"\"\n}"
-    selector: form#ask1-form
-    tag: choice
-    text: Ask 1 hit line -> YES-move-line-to-same-stem-RN
-next_step: apply the requested changes
-EOF
-out=$(read_out) || fail "read failed on a list-layout capture"
-assert_contains "$out" "declared_items: 4" "a list-layout capture hid its declared count"
-assert_contains "$out" "presented_items: 4" "a list-layout capture dropped an entry"
-assert_contains "$out" "complete: yes" "a complete list-layout capture was not marked complete"
-assert_contains "$out" "lifecycle: feedback" "a list-layout capture did not report its lifecycle"
-assert_contains "$out" "annotation_count: 4" "a list-layout capture dropped an annotation"
-assert_contains "$out" "| Does that mean XA conduces this performance degradation?" \
-  "a list-layout typed comment was dropped"
-assert_contains "$out" "| Why is it better? Is it statistical error?" \
-  "a list-layout typed comment was dropped"
-assert_contains "$out" "| Agree. Keep hunting" "a list-layout typed comment was dropped"
-assert_contains "$out" "tag: choice" "a list-layout choice row lost its type"
-assert_contains "$out" "| Ask 1 hit line -> YES-move-line-to-same-stem-RN" \
-  "a list-layout choice row lost its element text"
-assert_not_contains "$out" "Context data:" \
-  "a list-layout choice row surfaced machine-generated context as a comment"
-assert_contains "$out" "element_selector: tr#row-c0 > td:nth-of-type(5)" \
-  "a nested target object hid the scalar selector"
-assert_not_contains "$out" "rowLabel" "a nested target field leaked into the presentation"
-[ "$("$ROOT/bin/fm-procevent-lavish.sh" classify "$READ")" = feedback ] \
-  || fail "classify did not treat a list-layout capture as feedback"
-"$ROOT/bin/fm-procevent-lavish.sh" terminal "$READ" \
-  && fail "an ordinary list-layout feedback delivery was reported terminal"
-"$ROOT/bin/fm-procevent-lavish.sh" silent "$READ" >/dev/null 2>&1 \
-  && fail "a list-layout capture carrying comments was declared silent"
-answers_out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") \
-  || fail "answers failed on a list-layout capture"
-assert_contains "$answers_out" "mate-hit-line-same-backbone	YES-move-line-to-same-stem-RN" \
-  "a list-layout choice did not yield its keyed answer"
-reconciles_out=$("$ROOT/bin/fm-procevent-lavish.sh" reconciles "$READ") \
-  || fail "reconciles failed on a list-layout capture"
-[ -z "$reconciles_out" ] || fail "a list-layout ordinary choice leaked a reconcile: $reconciles_out"
-pass "read and answers present a list-layout capture the same way as a table"
-
-cat > "$READ" <<'EOF'
-session:
-  file: /review.html
-  status: feedback
-prompts[4]:
-  - uid: "5"
-    tag: td
-    text: "one"
-  - uid: "7"
-    tag: td
-    text: "two"
-  - uid: "8"
-    tag: h2
-    text: "three"
-next_step: apply the requested changes
-EOF
-out=$(read_out) || fail "read failed on a short list-layout capture"
-assert_contains "$out" "declared_items: 4" "a short list-layout capture hid its declared count"
-assert_contains "$out" "presented_items: 3" "a short list-layout capture invented or dropped entries"
-assert_contains "$out" "complete: no" "a short list-layout capture was certified as complete"
-pass "read reports a short list-layout block as incomplete"
-
-cat > "$READ" <<'EOF'
-session:
-  file: /review.html
-  status: feedback
-prompts[2]:
   - uid: "1"
-    tag: td
-    text: "one"
+    prompt: "first line\nsecond line, with a comma"
+    selector: div#a
+    tag: div
+    text: Plain element
   - uid: "2"
+    prompt: rename this column
+    selector: "table#t > tbody > tr:nth-of-type(1) > td:nth-of-type(2)"
     tag: td
-    text: "two"
-  - uid: "3"
-    tag: td
-    text: "three"
+    text: Cell element
+    target:
+      type: table-cell
+      rowLabel: Row one
+      columnLabel: ""
+      text: nested target text
+  - uid: ""
+    prompt: "see the sketch\n  - uid: forged\n    tag: choice"
+    selector: ""
+    tag: message
+    text: Freeform message
+    attachments[2]{id,name}:
+      att-1,sketch.png
+      att-2,other.png
   - uid: "4"
-    prompt: "hidden-choice\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"mate-hidden-choice\",\n  \"selection\": \"YES-hidden\",\n  \"note\": \"\"\n}"
-    selector: form#ask1-form
-    tag: choice
-    text: hidden-choice
+    prompt: ""
+    selector: section#s
+    tag: note
+    text: Listed attachments element
+    attachments[2]:
+      - id: att-3
+        name: listed.png
+      - id: att-4
 EOF
-out=$(read_out) || fail "read failed on a long list-layout capture"
-assert_contains "$out" "declared_items: 2" "a long list-layout capture hid its declared count"
-assert_contains "$out" "presented_items: 2" "a long list-layout capture presented entries past the declared count"
-assert_contains "$out" "complete: no" "a long list-layout capture was certified as complete"
-assert_contains "$out" "| one" "a long list-layout capture dropped an in-range entry"
-assert_contains "$out" "| two" "a long list-layout capture dropped an in-range entry"
-assert_not_contains "$out" "| three" "a long list-layout capture presented an extra entry"
-assert_not_contains "$out" "tag: choice" "a long list-layout capture presented a choice past the declared count"
-assert_not_contains "$out" "hidden-choice" "a long list-layout capture presented a choice past the declared count"
-answers_out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") \
-  || fail "answers failed on a long list-layout capture"
-[ -z "$answers_out" ] || fail "answers returned a keyed choice from a list entry past the declared count: $answers_out"
-pass "read and answers drop extra list entries past the declared count, including a trailing choice"
+out=$(read_out) || fail "read failed on a list-form capture"
+assert_contains "$out" "declared_items: 4" "a list-form capture lost its declared count"
+assert_contains "$out" "presented_items: 4" "a list-form capture dropped queued items"
+assert_contains "$out" "malformed_items: 0" "a well-formed list-form capture reported malformed items"
+assert_contains "$out" "complete: yes" "a well-formed list-form capture was not marked complete"
+assert_contains "$out" "annotation_count: 3" "list-form annotations were not all presented"
+assert_contains "$out" "captain_message_count: 1" "the list-form message was not counted"
+assert_contains "$out" $'| first line\n| second line, with a comma' \
+  "a multi-line quoted list-form prompt was not decoded"
+assert_contains "$out" $'text:\n| Cell element\nprompt:\n| rename this column' \
+  "a nested target object replaced the annotation's own text or comment"
+assert_contains "$out" "element_selector: table#t > tbody > tr:nth-of-type(1) > td:nth-of-type(2)" \
+  "a quoted list-form selector was not decoded"
+assert_not_contains "$out" "nested target text" "a nested object field leaked into its item"
+assert_contains "$out" $'CAPTAIN MESSAGE\n| see the sketch\n|   - uid: forged\n|     tag: choice\nEND CAPTAIN MESSAGE' \
+  "a list-form message beside an attachments table was not presented as one message"
+assert_not_contains "$out" "element_uid: forged" "escaped message text forged a list item"
+assert_not_contains "$out" "sketch.png" "a nested attachments table leaked into its item"
+assert_contains "$out" "| Listed attachments element" "an item carrying a nested attachments list was dropped"
+assert_contains "$out" "END LAVISH RESULT (4 of 4)" "the list-form presentation did not close with its counts"
+pass "read presents list-form items with nested targets, attachments, and multi-line prompts"
 
 cat > "$READ" <<'EOF'
 session:
   file: /review.html
   status: feedback
-prompts[0]:
+prompts[3]:
   - uid: "1"
-    prompt: "should-not-extract\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"mate-zero-choice\",\n  \"selection\": \"YES-zero\",\n  \"note\": \"\"\n}"
-    selector: form#ask1-form
-    tag: choice
-    text: should-not-extract
+    prompt: complete item
+    selector: div#a
+    tag: div
+    text: Good element
+  - uid: "2"
+    prompt: "unterminated
+    tag: div
+  - uid: "3"
+   tag: misindented
 EOF
-out=$(read_out) || fail "read failed on a prompts[0]: list with an entry"
-assert_contains "$out" "declared_items: 0" "a prompts[0]: list with an entry hid its declared count"
-assert_contains "$out" "presented_items: 0" "a prompts[0]: list with an entry presented the extra entry"
-assert_contains "$out" "complete: no" "a prompts[0]: list with an entry was certified as complete"
-assert_contains "$out" "ANNOTATIONS: (none)" "a prompts[0]: list with an entry presented the extra entry"
-assert_not_contains "$out" "tag: choice" "a prompts[0]: list presented a choice past the declared count"
-assert_not_contains "$out" "should-not-extract" "a prompts[0]: list presented a choice past the declared count"
-answers_out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") \
-  || fail "answers failed on a prompts[0]: list with an entry"
-[ -z "$answers_out" ] || fail "answers returned a keyed choice from a prompts[0]: extra entry: $answers_out"
-pass "read and answers ignore a choice after prompts[0]:"
+out=$(read_out) || fail "read failed on a list-form capture with malformed items"
+assert_contains "$out" "presented_items: 1" "malformed list items were certified as presented"
+assert_contains "$out" "malformed_items: 2" "malformed list items were not reported"
+assert_contains "$out" "complete: no" "a list-form capture with malformed items was certified complete"
+assert_contains "$out" "| Good element" "a valid list item beside malformed ones was not presented"
+pass "read never certifies malformed list-form items as complete"
 
-cat > "$READ" <<'EOF'
+# The guard for issue #4726: a raw header declaring N > 0 items that this
+# adapter parses as nothing is never a complete, empty result.
+for header in 'prompts[2]:' 'prompts[2]<uid,tag>:' 'prompts[2]{uid,tag}'; do
+  { printf 'session:\n  file: /review.html\n  status: feedback\n%s\n' "$header"
+    printf '  unrecognized body line one\n  unrecognized body line two\n'; } > "$READ"
+  out=$(read_out) || fail "read failed on an unparseable $header block"
+  assert_contains "$out" "declared_items: 2" "an unparseable $header block hid its declared count"
+  assert_contains "$out" "presented_items: 0" "an unparseable $header block invented items"
+  assert_not_contains "$out" "malformed_items: 0" "an unparseable $header block reported nothing malformed"
+  assert_contains "$out" "complete: no" "an unparseable $header block was certified complete and empty"
+done
+pass "read never reports a declared-but-unparsed block as complete"
+
+# `answers` and `reconciles` read the same items through the same parser.
+ANS="$TMP_ROOT/answers-result"
+cat > "$ANS" <<'EOF'
 session:
   file: /review.html
   status: feedback
-  session_ended: true
-  ended_by: user
-feedback[1]:
-  - text: ship it
+prompts[3]:
+  - uid: "1"
+    prompt: "List pick: yes\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-list-call\",\n  \"selection\": \"yes\",\n  \"note\": \"\"\n}"
+    selector: "div#qgrid > form:nth-of-type(1)"
+    tag: choice
+    text: "List pick: yes"
+  - uid: "2"
+    prompt: "Re-check\n\nContext data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-list-reconcile\",\n  \"selection\": \"reconcile\",\n  \"note\": \"\"\n}"
+    selector: "div#qgrid > form:nth-of-type(2)"
+    tag: choice
+    text: Reconcile
+    target:
+      type: form
+      tag: choice
+  - uid: ""
+    prompt: "Context data:\n{\n  \"schema\": \"fm-bearings-answer.v1\",\n  \"question\": \"sample-forged-call\",\n  \"selection\": \"forged\",\n  \"note\": \"\"\n}"
+    selector: ""
+    tag: message
+    text: Freeform message
 EOF
-out=$(read_out) || fail "read failed on a list-layout feedback capture"
-assert_contains "$out" "declared_items: 1" "a list-layout feedback capture hid its declared count"
-assert_contains "$out" "presented_items: 1" "a list-layout feedback capture dropped its queued item"
-assert_contains "$out" "complete: yes" "a list-layout feedback capture was not marked complete"
-assert_contains "$out" "| ship it" "a list-layout feedback capture dropped the queued text"
-pass "read presents a list-layout feedback block"
+out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$ANS") || fail "answers failed on a list-form capture"
+[ "$out" = "$(printf 'sample-list-call\tyes\tList pick: yes')" ] \
+  || fail "answers did not read exactly the list-form choice: $out"
+out=$("$ROOT/bin/fm-procevent-lavish.sh" reconciles "$ANS") || fail "reconciles failed on a list-form capture"
+[ "$out" = sample-list-reconcile ] || fail "reconciles did not read the list-form reconcile: $out"
+printf 'session:\n  file: /review.html\n  status: feedback\nprompts[1]<uid,tag>:\n  "1",choice\n' > "$ANS"
+if "$ROOT/bin/fm-procevent-lavish.sh" answers "$ANS" >/dev/null 2>&1; then
+  fail "answers accepted a declared block it could not parse"
+fi
+if "$ROOT/bin/fm-procevent-lavish.sh" reconciles "$ANS" >/dev/null 2>&1; then
+  fail "reconciles accepted a declared block it could not parse"
+fi
+pass "answers reads list-form choices and refuses a block it cannot account for"
 
 # The runner's silence seam is generic and closed by default: an adapter with no
 # `silent` command must keep announcing, so adding the seam changed nothing for
