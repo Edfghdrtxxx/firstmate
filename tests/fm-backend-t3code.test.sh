@@ -2499,11 +2499,18 @@ test_pooled_t3_secondmate_home_returned_only_after_provider_exits() {
   provider=$!
   cat > "$fb/treehouse" <<TH
 #!/usr/bin/env bash
-if kill -0 $provider 2>/dev/null; then printf 'provider-alive\n'; else printf 'provider-gone\n'; fi >> '$CASE_DIR/return.log'
-if [ -e '$home/.codex/config.toml' ] || [ -L '$home/config/t3code-token' ] \
-  || grep -q FM_SUPERVISOR_TARGET '$home/.claude/settings.local.json'; then
-  printf 't3-env-present\n' >> '$CASE_DIR/return.log'
-fi
+# The fork retires a returned slot with \`treehouse destroy\` after
+# \`treehouse return\` releases its lease; only the return is the slot-return
+# event this case proves, so destroy stays a silent success here.
+case "\$1" in
+  return)
+    if kill -0 $provider 2>/dev/null; then printf 'provider-alive\n'; else printf 'provider-gone\n'; fi >> '$CASE_DIR/return.log'
+    if [ -e '$home/.codex/config.toml' ] || [ -L '$home/config/t3code-token' ] \
+      || grep -q FM_SUPERVISOR_TARGET '$home/.claude/settings.local.json'; then
+      printf 't3-env-present\n' >> '$CASE_DIR/return.log'
+    fi
+    ;;
+esac
 exit 0
 TH
   chmod +x "$fb/treehouse"
