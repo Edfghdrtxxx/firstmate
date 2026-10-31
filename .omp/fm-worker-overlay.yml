@@ -7,7 +7,9 @@
 # Each key below pins one setting whose captain-facing value would park an
 # unattended worker on an interactive prompt, change its pinned model under it,
 # or make its composer unreadable to bin/fm-composer-lib.sh. Verified against
-# omp 18.1.11's own settings schema (`omp config list`).
+# omp 18.14.0's own settings schema (`omp config list`); `retry.modelFallback`
+# proven end to end on that version - see the Autonomy row of
+# .agents/skills/harness-adapters/references/harness/omp.md.
 composer:
   # Renders a bare `❯` (U+276F) row, a glyph the shared composer classifier
   # already reads; the shipped default `band` and six other shapes are not in
@@ -25,3 +27,9 @@ retry:
   # `confirm` pops a dialog when a usage window runs low; `auto` lets omp fall
   # through the captain's own fallback chain without a keystroke.
   usageReservePolicy: auto
+  # omp's own switch for retry.fallbackChains model switching; `false` keeps a
+  # --model-pinned worker on its pinned model through transient errors, while
+  # same-model retries still run. Verified live on 18.14.0: with this unset a
+  # session on a dead-endpoint model walked the captain's `web` chain onto
+  # google-antigravity/gemini-3.8-flash; with it the request failed in place.
+  modelFallback: false
