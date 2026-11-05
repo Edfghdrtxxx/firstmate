@@ -16,6 +16,11 @@
 # locked drain rotates such leftovers away before doing anything else.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# A ship or scout worker (FM_TASK_ID, exported by bin/fm-spawn.sh only into
+# those panes, or a shell inside a recorded ship/scout worktree, covering a
+# pane revived outside spawn) supervises no home, so it is refused before any
+# presentation or queue change; a secondmate is not marked and its home is no
+# task worktree, so it drains its own home as before.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -235,6 +240,11 @@ case "${1:-}" in
     ;;
   *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
 esac
+
+if fm_task_worker_detected; then
+  echo "wake drain: refused - task worker${FM_TASK_ID:+ $FM_TASK_ID} supervises no home; firstmate alone presents and acknowledges these wakes, so leave the queue untouched" >&2
+  exit 2
+fi
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
 

@@ -44,7 +44,15 @@
 # branch's turn ends, and a successor cycle that closed on a newer wake mid-turn
 # is that host's normal gap), while the repair line names the primary's own arm
 # command, which under a supervision host's primary pin is the host itself or
-# the plain arm. Always exits 0: the guard warns, it never blocks.
+# the plain arm. A ship or scout worker (FM_TASK_ID, which bin/fm-spawn.sh
+# exports only into those panes, or a shell sitting inside the recorded
+# worktree of a ship/scout meta, which covers a pane revived outside spawn)
+# supervises no home, so after the tangle alarm the guard prints nothing to it
+# and leaves the episode state alone: no queued-wake warning, banner,
+# reminder, or repair line that a worker could mistake for its own
+# instruction to drain or acknowledge firstmate's wakes. A secondmate is not
+# marked and its home is no task worktree, so it keeps every message. Always
+# exits 0: the guard warns, it never blocks.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -171,6 +179,9 @@ if [ -n "$tangle_branch" ]; then
     printf '●%s\n' "$trule"
   } >&2
 fi
+
+# A task worker supervises no home: no supervision output for it (header).
+fm_task_worker_detected && exit 0
 
 # Compute supervision need and watcher-beacon freshness via the shared
 # grace-based predicate (bin/fm-supervision-lib.sh), which owns what needs
