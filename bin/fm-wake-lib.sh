@@ -1682,6 +1682,39 @@ fm_firstmate_root_home() {
   printf '%s\n' "$home"
 }
 
+# fm_task_worker_detected: 0 when the caller is a ship or scout task worker,
+# whether or not bin/fm-spawn.sh's FM_TASK_ID export survived in its
+# environment. The launch marker is checked first. Its absence alone does not
+# clear the caller: a pane revived outside fm-spawn (a backend session restore
+# after a host restart, a manual attach) loses the export but still sits at a
+# shell inside the worktree its task record named, so the fallback matches the
+# caller's cwd against the physical worktree= path of every ship/scout meta in
+# <state> (default $STATE). Secondmate metas are skipped because their
+# worktree= is the secondmate's own home, and a secondmate supervises that
+# home. Physical-path comparison (pwd -P on both sides) keeps symlinks from
+# hiding or forging a match, and a meta whose recorded worktree no longer
+# resolves is skipped rather than matched lexically. A firstmate session runs
+# from the home itself, so neither branch matches it.
+fm_task_worker_detected() {  # [state-dir]
+  local state=${1:-$STATE} meta wt wt_phys cwd
+  [ -n "${FM_TASK_ID:-}" ] && return 0
+  cwd=$(pwd -P 2>/dev/null) || return 1
+  for meta in "$state"/*.meta; do
+    [ -e "$meta" ] || continue
+    case "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" in
+      ship|scout) ;;
+      *) continue ;;
+    esac
+    wt=$(grep '^worktree=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)
+    [ -n "$wt" ] || continue
+    wt_phys=$(CDPATH='' cd -- "$wt" 2>/dev/null && pwd -P) || continue
+    case "$cwd" in
+      "$wt_phys"|"$wt_phys"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # Every Firstmate state directory on THIS machine whose task records can share a
 # machine-local resource with <first-state>: <first-state> itself, then the local
 # root home and each local secondmate home registered below it, walked through
