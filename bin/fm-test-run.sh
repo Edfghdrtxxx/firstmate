@@ -657,11 +657,18 @@ standalone
 EOF
 }
 
+# Process substitution is unsafe here on stock macOS Bash 3.2: an early
+# return leaves the producer mid-write on a full pipe, and the producer's
+# SIGPIPE death is then reaped into $? of an enclosing $(...) or kills the
+# subshell outright under set -e, truncating the list. Feed the scan from a
+# herestring-shaped heredoc instead, which drains the producer eagerly.
 family_is_concurrent_safe() {
   local want=$1 line
   while IFS= read -r line; do
     [ "$line" = "$want" ] && return 0
-  done < <(list_concurrent_safe_families)
+  done <<FM_TEST_RUN_EOF
+$(list_concurrent_safe_families)
+FM_TEST_RUN_EOF
   return 1
 }
 
@@ -680,17 +687,23 @@ script_allows_concurrency() {
   is_proven_isolated_script "$s" && return 0
   family=$(family_for_basename "$(basename "$s")")
   family_is_concurrent_safe "$family" || return 1
+  # Heredoc, not process substitution: see family_is_concurrent_safe.
   while IFS= read -r repo_script; do
     [ "$repo_script" = "$s" ] && return 0
-  done < <(all_repo_tests)
+  done <<FM_TEST_RUN_EOF
+$(all_repo_tests)
+FM_TEST_RUN_EOF
   return 1
 }
 
+# Heredoc, not process substitution: see family_is_concurrent_safe.
 is_proven_isolated_script() {
   local want=$1 line
   while IFS= read -r line; do
     [ "$line" = "$want" ] && return 0
-  done < <(list_proven_isolated)
+  done <<FM_TEST_RUN_EOF
+$(list_proven_isolated)
+FM_TEST_RUN_EOF
   return 1
 }
 
@@ -970,6 +983,7 @@ tests/fm-watch-wedge-cap-live.test.sh 74
 tests/fm-watcher-lock.test.sh 72022
 tests/fm-worker-account-live-e2e.test.sh 3179
 tests/fm-worker-account.test.sh 37445
+tests/fm-worker-supervision.test.sh 11000
 EOF
 }
 
@@ -1006,12 +1020,15 @@ portable_parallel_weight_for() {
 
 portable_serial_weight_for() {
   local want=$1 path ms
+  # Heredoc, not process substitution: see family_is_concurrent_safe.
   while read -r path ms; do
     if [ "$path" = "$want" ]; then
       printf '%s\n' "$ms"
       return 0
     fi
-  done < <(portable_serial_weight_hints)
+  done <<FM_TEST_RUN_EOF
+$(portable_serial_weight_hints)
+FM_TEST_RUN_EOF
   printf '%s\n' "$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS"
 }
 
