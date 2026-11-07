@@ -2146,7 +2146,7 @@ if [ "${1:-}" = "capture-pane" ]; then printf 'tick %s\n' "$RANDOM$RANDOM$RANDOM
 exit 1
 SH
   chmod +x "$fakebin/tmux"
-  key=$(printf '%s' "$window" | tr ':/.' '___')
+  key=$(watch_window_key "$window")
   printf '%s' "$(hash_text 'the previous render')" > "$state/.hash-$key"
   printf '0\n' > "$state/.count-$key"
   export FM_FAKE_CREW_STATE='state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
