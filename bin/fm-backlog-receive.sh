@@ -142,7 +142,8 @@ KEYS=()
 while IFS= read -r key; do
   [ -n "$key" ] && KEYS+=("$key")
 done < <(list_keys "$DELIVERED")
-for key in "${KEYS[@]}"; do
+# Bash 3.2 reads "${KEYS[@]}" on an empty array as unbound under set -u.
+for key in ${KEYS[@]+"${KEYS[@]}"}; do
   section=$(backlog_key_section "$DELIVERED" "$key") || die "delivered key disappeared during classification: $key"
   [ "$section" = '## Queued' ] || die "delivered outbox contains non-Queued item $key under $section"
 done
@@ -155,7 +156,7 @@ if [ ! -f "$DEST" ]; then
 fi
 TO_MOVE=()
 ALREADY=()
-for key in "${KEYS[@]}"; do
+for key in ${KEYS[@]+"${KEYS[@]}"}; do
   if backlog_key_section "$DEST" "$key" >/dev/null 2>&1; then
     ALREADY+=("$key")
   else
@@ -178,7 +179,7 @@ if [ "${#TO_MOVE[@]}" -gt 0 ]; then
   fi
 fi
 
-for key in "${KEYS[@]}"; do
+for key in ${KEYS[@]+"${KEYS[@]}"}; do
   backlog_key_section "$DEST" "$key" >/dev/null 2>&1 \
     || die "receipt verification failed for $key; delivered outbox is preserved"
 done

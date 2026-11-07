@@ -22,7 +22,9 @@ fm_hermes_profile_home() {
   fi
   local args=()
   [ -z "$profile" ] || args=(-p "$profile")
-  config=$("$binary" "${args[@]}" config path) || return 1
+  # Bash 3.2 treats "${args[@]}" on an empty array as an unbound variable
+  # under set -u, so guard it the way fm-backlog-handoff.sh does.
+  config=$("$binary" ${args[@]+"${args[@]}"} config path) || return 1
   case "$config" in
     /*/config.yaml) printf '%s' "${config%/config.yaml}" ;;
     *) echo 'error: hermes config path did not return an absolute config.yaml path' >&2; return 1 ;;
