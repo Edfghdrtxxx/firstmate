@@ -1,0 +1,59 @@
+ Same suite, different case this time — the watcher hit the 100-poll bound again. Reproducing
+ that specific case in the foreground to check correctness vs. slowness.
+
+ This case runs 3 absorb rounds then an exit round. Timing that exact sequence on all three
+ trees to see if merged is materially slower.
+
+ Waiting on the three-tree timing comparison for the failing case.
+
+ Waiting on the three-tree timing run (bg_39) to determine whether the merged watcher is slower
+ in the failing case or it's the same load flake.
+
+ The exact failing case produces identical correct output on all three trees in ~6s — the
+ merged watcher is not slower; the suite failures are budget flakes under load. One more
+ full-suite rerun at load ~7.
+
+ The rerun is still in flight (load climbed back to ~20). Waiting for it to finish.
+
+ Waiting on the final wedge-defer rerun.
+
+ That run was killed by the 300s job cap mid-suite (all executed cases passed). Re-running it
+ without a deadline.
+
+ Waiting on the deadline-free rerun of fm-watch-triage-wedge-defer.
+
+ Still running — the suite's absorb rounds take several minutes each. Waiting for the result.
+
+ Waiting on the suite — it's through 3 of 13 checks cleanly.
+
+
+ Read your inbox messages 006 and 007 in state/fm-sync-upstream-7.inbox and act on them now.
+
+
+ All four suites now pass on the merged tree (fm-watch-triage-wedge-defer rc=0, all 13 checks).
+ Checking message 007.
+
+ 006 already handled; the four reruns are done (all four pass: busy-adapter-wiring,
+ watch-checkpoint, bearings-board, and wedge-defer after 3 quiet-load attempts) and the tally
+ is corrected. Updating the table rows and pushing the body to the PR.
+
+ Done, captain — both messages handled:
+
+ - Four reruns at load ~7, serial, on PR head 0ed09c61: all pass — fm-busy-adapter-wiring,
+   fm-watch-checkpoint, fm-bearings-board on the first try; fm-watch-triage-wedge-defer green
+   on a quiet rerun (all 13 checks), confirming the earlier failures were load flakes. None
+   failed on the merged tree.
+ - Final tally corrected: 72 standalone failures = 57 identical on both baselines (3 by
+   timeout) + 4 upstream-side + 2 fork-side pre-existing + 2 new-upstream suites + 7 resolved
+   flakes — zero merged-only defects.
+ - PR body updated at https://github.com/Edfghdrtxxx/firstmate/pull/24 (open, not a draft).
+   Status line appended reporting no merged-tree failures.
+
+ ※ recap: Captain, the upstream merge PR https://github.com/Edfghdrtxxx/firstmate/pull/24 is
+ open and fully verified: all tests classified, zero merged-only defects, body updated. Next:
+ your merge call, with a merge commit rather than squash.
+
+❯
+ [SWE-2 (High)] │ firstmate git:(fm/fm-omp-recap-composer*) | Tool output expansion: disabled
+ Context ████████░░ 81% (210,966/262,000) (session in: 3.4M, out: 81.7k, cache: 37.9M (92%))
+ [wt] firstmate/firstmate · @ fm/fm-omp-recap-composer   🔱 MERGE: Merge… · ctx: 80.5%/262K [A]

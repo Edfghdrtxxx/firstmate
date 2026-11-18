@@ -1,0 +1,59 @@
+ Same suite, different case this time — the watcher hit the 100-poll bound again. Reproducing   
+ that specific case in the foreground to check correctness vs. slowness.                        
+
+ This case runs 3 absorb rounds then an exit round. Timing that exact sequence on all three     
+ trees to see if merged is materially slower.                                                   
+
+ Waiting on the three-tree timing comparison for the failing case.                              
+
+ Waiting on the three-tree timing run (bg_39) to determine whether the merged watcher is slower 
+ in the failing case or it's the same load flake.                                               
+
+ The exact failing case produces identical correct output on all three trees in ~6s — the       
+ merged watcher is not slower; the suite failures are budget flakes under load. One more        
+ full-suite rerun at load ~7.                                                                   
+
+ The rerun is still in flight (load climbed back to ~20). Waiting for it to finish.             
+
+ Waiting on the final wedge-defer rerun.                                                        
+
+ That run was killed by the 300s job cap mid-suite (all executed cases passed). Re-running it   
+ without a deadline.                                                                            
+
+ Waiting on the deadline-free rerun of [0m[38;5;2mfm-watch-triage-wedge-defer[0m.                             
+
+ Still running — the suite's absorb rounds take several minutes each. Waiting for the result.   
+
+ Waiting on the suite — it's through 3 of 13 checks cleanly.                                    
+
+[0m[48;2;197;218;245m                                                                                                [0m
+[0m[48;2;197;218;245m [0m[38;2;0;0;0m[48;2;197;218;245mRead your inbox messages 006 and 007 in state/fm-sync-upstream-7.inbox and act on them now.[0m[48;2;197;218;245m    [0m
+[0m[48;2;197;218;245m                                                                                                [0m
+
+ All four suites now pass on the merged tree ([0m[38;5;2mfm-watch-triage-wedge-defer[0m rc=0, all 13 checks). 
+ Checking message 007.                                                                          
+
+ 006 already handled; the four reruns are done (all four pass: busy-adapter-wiring,             
+ watch-checkpoint, bearings-board, and wedge-defer after 3 quiet-load attempts) and the tally   
+ is corrected. Updating the table rows and pushing the body to the PR.                          
+
+ Done, captain — both messages handled:                                                         
+                                                                                                
+ [0m[38;2;43;89;195m- [0m[1m[38;5;5mFour reruns at load ~7, serial, on PR head [0m[1m[38;5;2m0ed09c61[0m: all pass — [0m[38;5;2mfm-busy-adapter-wiring[0m,      
+   [0m[38;5;2mfm-watch-checkpoint[0m, [0m[38;5;2mfm-bearings-board[0m on the first try; [0m[38;5;2mfm-watch-triage-wedge-defer[0m green   
+   on a quiet rerun (all 13 checks), confirming the earlier failures were load flakes. None     
+   failed on the merged tree.                                                                   
+ [0m[38;2;43;89;195m- [0m[1m[38;5;5mFinal tally corrected[0m: 72 standalone failures = 57 identical on both baselines (3 by         
+   timeout) + 4 upstream-side + 2 fork-side pre-existing + 2 new-upstream suites + 7 resolved   
+   flakes — zero merged-only defects.                                                           
+ [0m[38;2;43;89;195m- [0m[1m[38;5;5mPR body updated[0m at [0m[4m[38;2;43;89;195mhttps://github.com/Edfghdrtxxx/firstmate/pull/24[0m (open, not a draft).     
+   Status line appended reporting no merged-tree failures.                                      
+
+ [0m[3m[38;2;140;149;159m※ recap: Captain, the upstream merge PR https://github.com/Edfghdrtxxx/firstmate/pull/24 is    [0m
+ [0m[3m[38;2;140;149;159mopen and fully verified: all tests classified, zero merged-only defects, body updated. Next:   [0m
+ [0m[3m[38;2;140;149;159myour merge call, with a merge commit rather than squash.[0m                                       
+
+❯                                                                                               
+ [0m[38;5;6m[SWE-2 (High)][0m │ [0m[38;5;3mfirstmate[0m [0m[38;5;5mgit:([0m[38;5;6mfm/fm-omp-recap-composer[0m[38;5;5m)[0m | Tool output expansion: disabled    
+ [0m[2mContext[0m [0m[38;5;3m████████[0m[2m[38;5;3m░░[0m [0m[38;5;3m81% (210,966/262,000)[0m[2m (session in: 3.4M, out: 81.7k, cache: 37.9M (92%))[0m    
+ [0m[38;2;130;80;223m[wt] firstmate/firstmate[0m [0m[38;2;216;210;196m·[0m [0m[38;2;26;127;55m@ fm/fm-omp-recap-composer[0m   [0m[38;2;88;69;194m🔱 MERGE: Merge[0m… [0m[38;2;216;210;196m·[0m ctx: [0m[38;2;130;80;223m80.5%/262K[0m [0m[38;2;130;80;223m[A][0m 
