@@ -692,8 +692,13 @@ FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
 # or ` | ` separator, and the `pi`-led or bracket-led cells row carrying an
 # `@`-branch or `ctx:` cell. The `pi`-led alternative requires a bracketed cell
 # later in the row so `pi ·` prose stays typed text. It is consulted only as
-# the boundary BELOW a bare composer, never on the composer row itself.
-FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*Context[[:space:]][█░▓▒]+[[:space:]].*[0-9]+(\.[0-9]+)?%[[:space:]]*\(|^[[:space:]]*\[[^]]+\][[:space:]]*[│|][[:space:]].*(git:\(|\|)|^[[:space:]]*\[[^]]+\][[:space:]].*·[[:space:]]*(@|ctx:)|^[[:space:]]*pi[[:space:]]+·[[:space:]].*\[[^]]+\][^[]*·'
+# the boundary BELOW a bare composer, never on the composer row itself. The
+# multibyte furniture glyphs are alternation groups, never bracket classes:
+# under LC_ALL=C a bracket class matches single BYTES, so `[│|]` can never
+# match `│`'s three-byte sequence (the failure that skipped the doorbell
+# under a C-locale shell) while a `(█|░|▓|▒)` alternation matches the same
+# bytes under C as under UTF-8.
+FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*Context[[:space:]](█|░|▓|▒)+[[:space:]].*[0-9]+(\.[0-9]+)?%[[:space:]]*\(|^[[:space:]]*\[[^]]+\][[:space:]]*(│|\|)[[:space:]].*(git:\(|\|)|^[[:space:]]*\[[^]]+\][[:space:]].*·[[:space:]]*(@|ctx:)|^[[:space:]]*pi[[:space:]]+·[[:space:]].*\[[^]]+\][^[]*·'
 # Pi's footer stats row opens at column 0 with the session cost when every
 # token counter is zero (`$0.000 (sub) 5.4%/272k (auto)` on pi 0.85.1).
 # That leading `$` is a cost cell, not a dead-shell prompt, only when a digit

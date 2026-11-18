@@ -29,6 +29,10 @@ set -u
 
 SEND="$ROOT/bin/fm-send.sh"
 CONTROL="$ROOT/bin/fm-control.sh"
+
+# LC_ALL=C is pinned inside run_tool: the fleet daemons that call these verbs
+# run under the C locale, and multibyte bracket classes in the furniture regex
+# only fail there - the environment that hid this defect from a UTF-8 shell.
 FIXTURES="$ROOT/tests/fixtures/omp-18.22-status-furniture"
 
 TMP_ROOT=$(fm_test_tmproot fm-omp-status-furniture)
@@ -137,6 +141,7 @@ run_tool() { # <case-dir> <err-file> <tool> <args...>
     FM_ROOT_OVERRIDE="$dir/home" FM_HOME="$dir/home" \
     FM_SEND_SETTLE=0 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0 FM_BACKEND_HERDR_SUBMIT_POLLS=1 \
     FM_CONTROL_POLL=0.1 FM_CONTROL_EXIT_WAIT=5 \
+    LC_ALL=C \
     FM_HERDR_LOG="$dir/herdr.log" FM_HERDR_PANE=w1:p1 \
     FM_HERDR_AGENT_DEAD="$dir/agent-dead" FM_HERDR_LAST_TEXT="$dir/last-text" \
     FM_HERDR_SCREEN="$dir/screen" \
