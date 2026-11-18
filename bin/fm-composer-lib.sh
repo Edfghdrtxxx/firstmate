@@ -661,25 +661,44 @@ FM_COMPOSER_LEFTBAR_FOOTER_RE_DEFAULT='^(Build|Plan)[[:space:]]+·[[:space:]]+'
 # is deliberately not matched - and the marker is quantifier-free so the same
 # bytes match under LC_ALL=C as under a UTF-8 locale.
 FM_COMPOSER_MODE_HINT_RE_DEFAULT='^[[:space:]]*(⏵|⏸)'
-# omp (Oh My Pi) draws a one-row status line directly BELOW its borderless
+# omp (Oh My Pi) draws its own furniture directly BELOW its borderless
 # composer: an identity or spinner cell, then middle-dot separated model, path,
-# git, and context cells. Verified live through Herdr on omp 18.1.11:
+# git, and context cells. Verified live through Herdr on omp 18.1.11, where the
+# whole block was one row:
 # ` π  · ◔ GPT-6-Astra · 🌳 …-workspace · ⑂ detached · ◫ 15.4%/272K ⟲ · (sub)`
 # idle under the unicode preset, ` 󰵗  ·  qwen3:8b ·  … ·  36.7%/41K` under
 # nerd, and ` ⠧ 11s  · …` while busy. Without this rule the bare composer's
-# wrap region walks straight into that row and an idle omp pane reads
+# wrap region walks straight into that furniture and an idle omp pane reads
 # `pending`, the false verdict that skipped the doorbell on the first live omp
-# worker. A row is omp status furniture when it opens with omp's identity cell
-# then a middle dot (`π` under the unicode preset, `󰵗` under nerd: the
-# `icon.omp` of those omp 18.1.11 presets, never an arbitrary short token, so
-# a wrapped typed row such as `fix · tests` stays composer input; the ascii
-# preset's `pi` is deliberately absent because that preset's `sep.dot` is
-# ` - `, so its status row never carries a middle dot and a `pi ·` alternative
-# could only ever match typed text), when it opens with one of omp's spinner
-# frames then an elapsed cell, or when it carries the context-usage cell after
-# a middle dot. It is consulted only as the boundary BELOW a bare composer,
-# never on the composer row itself.
-FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K'
+# worker.
+# omp 18.22.x splits the same block into up to three rows under every statusLine
+# preset (verified live through Herdr on 18.22.2, presets default, minimal,
+# compact, full, nerd, ascii, custom):
+#   - a hook-status row `[<model> (<effort>)] │ <path> git:(<branch>) | <hint>`
+#     (`[SWE-2 (High)] │ fm-omp-recap-composer git:(main) | Tool output
+#     expansion: disabled`),
+#   - a context-usage meter row `Context ████████░░ 81% (210,966/262,000) (...)`,
+#   - a cells row led by the literal `pi` segment token or a bracketed cell
+#     (`pi · [~] SWE-2 · [D] …path · @ main`, `[M] SWE-2 · @ main`,
+#     `[D] …path · @ main · ctx: 10.5%/262K [A]`).
+# A row is omp status furniture when it opens with omp's identity cell then a
+# middle dot (`π` under the unicode preset, `󰵗` under nerd: the `icon.omp` of
+# those omp 18.1.11 presets, never an arbitrary short token, so a wrapped typed
+# row such as `fix · tests` stays composer input), when it opens with one of
+# omp's spinner frames then an elapsed cell, when it carries the context-usage
+# cell after a middle dot, or when it is one of the three 18.22 row shapes
+# above, each anchored on structure typed input cannot plausibly repeat: the
+# `Context` bar's block-drawing cells, the bracketed model cell plus `git:(`
+# or ` | ` separator, and the `pi`-led or bracket-led cells row carrying an
+# `@`-branch or `ctx:` cell. The `pi`-led alternative requires a bracketed cell
+# later in the row so `pi ·` prose stays typed text. It is consulted only as
+# the boundary BELOW a bare composer, never on the composer row itself. The
+# multibyte furniture glyphs are alternation groups, never bracket classes:
+# under LC_ALL=C a bracket class matches single BYTES, so `[│|]` can never
+# match `│`'s three-byte sequence (the failure that skipped the doorbell
+# under a C-locale shell) while a `(█|░|▓|▒)` alternation matches the same
+# bytes under C as under UTF-8.
+FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:]]|^[[:space:]]*'"$FM_OMP_SPINNER_FRAMES_RE"'[[:space:]]+[0-9]+[smh]([[:space:]]|$)|[[:space:]]·[[:space:]].*[0-9]+(\.[0-9]+)?%/[0-9]+K|^[[:space:]]*Context[[:space:]](█|░|▓|▒)+[[:space:]].*[0-9]+(\.[0-9]+)?%[[:space:]]*\(|^[[:space:]]*\[[^]]+\][[:space:]]*(│|\|)[[:space:]].*(git:\(|\|)|^[[:space:]]*\[[^]]+\][[:space:]].*·[[:space:]]*(@|ctx:)|^[[:space:]]*pi[[:space:]]+·[[:space:]].*\[[^]]+\][^[]*·'
 # Pi's footer stats row opens at column 0 with the session cost when every
 # token counter is zero (`$0.000 (sub) 5.4%/272k (auto)` on pi 0.85.1).
 # That leading `$` is a cost cell, not a dead-shell prompt, only when a digit

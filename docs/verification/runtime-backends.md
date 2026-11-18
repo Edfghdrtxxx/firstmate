@@ -3487,6 +3487,22 @@ Before the status-row rule the shared classifier folded that row into the bare c
 After the rule, the same live Herdr capture read `empty`, a steer's doorbell landed, and the worker opened a turn on it.
 `tests/fm-composer-lib.test.sh` pins the unicode idle row, the nerd-preset idle row, the busy spinner row, and typed text over the same fixture in both locales.
 
+### Status furniture rows (18.22.x)
+
+Verified on 2026-11-18 against omp 18.22.2 (`~/.local/bin/omp`, a Bun-compiled single binary) on macOS 26 arm64 through the Herdr backend.
+The single status row the 18.1.11 rule was written for became up to three rows under every `statusLine.preset` (`default`, `minimal`, `compact`, `full`, `nerd`, `ascii`, and the captain's `custom`), directly below the bare `❯` composer:
+
+```text
+❯
+ [SWE-2 (High)] │ firstmate git:(fm/fm-omp-recap-composer) | Tool output expansion: disabled
+ Context ████████░░ 81% (210,966/262,000) (session in: 3.4M, out: 81.7k, cache: 37.9M (92%))
+ pi · [wt] firstmate/firstmate · @ fm/fm-omp-recap-composer · ctx: 80.5%/262K [A] · S3.86
+```
+
+Rows the furniture rule did not know - the bracketed model/hook-status row, the `Context` meter row, and cells rows led by a bracketed cell instead of `pi` - folded into the bare composer's wrap region, so an idle worker showing its `※ recap:` block read `pending`: `bin/fm-send.sh` skipped its doorbell, and `bin/fm-control.sh exit` refused to type `/quit`.
+`FM_COMPOSER_OMP_STATUS_RE_DEFAULT` now recognizes all three row shapes, with multibyte furniture glyphs written as alternation groups rather than bracket classes so the pattern matches identically under `LC_ALL=C` and UTF-8; `tests/fm-omp-status-furniture.test.sh` pins `LC_ALL=C` and drives real `fm-send.sh` and `fm-control.sh` against the captured viewport (a doorbell rings, Escape is delivered, `/quit` is typed and confirmed, and a composer holding real text still reads `pending`), and `tests/fm-composer-lib.test.sh` pins each row plus typed-text negatives.
+Two related observations not fixed here: before its first turn omp draws `Shift+Tab to change thinking effort` on the `❯` row itself, whose accent-colored `Shift+Tab` survives ghost stripping and reads `pending` (the composer row is off-limits to the furniture rule); and `※ recap:` rows ghost-strip away under their dim styling, so the recap itself was never the misclassification - only its coincidence with the new status rows made it look like one.
+
 ### Busy state and lifecycle
 
 | Fact | Observed |

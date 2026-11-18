@@ -669,6 +669,51 @@ test_matrix_omp_status_row_bounds_bare_composer() {
   pass "matrix: omp's status row bounds the bare composer's wrap region"
 }
 
+test_matrix_omp_status_furniture_rows_bound_bare_composer() {
+  # omp 18.22.x splits the single 18.1 status row into up to three furniture
+  # rows under every statusLine preset, verified live through Herdr on
+  # 18.22.2: a bracketed model/hook-status row, a `Context` meter row, and a
+  # cells row led by the literal `pi` token or a bracketed cell. Rows the
+  # furniture rule did not know read as wrapped composer input, so a fleet
+  # omp worker - the captain's custom preset among them - read `pending`,
+  # which skipped the doorbell and refused fm-control exit.
+  local hook context cells_pi cells_bracket cells_compact screen typed
+  hook=' [SWE-2 (High)] │ fm-omp-recap-composer git:(main) | Tool output expansion: disabled'
+  context=' Context ████████░░ 81% (210,966/262,000) (session in: 3.4M, out: 81.7k, cache: 37.9M (92%))'
+  cells_pi=' pi · [wt] firstmate/firstmate · @ fm/fm-omp-recap-composer · ctx: 80.5%/262K [A] · S3.86'
+  cells_bracket=' [D] …te/data/fm-omp-recap-composer · @ main                                ctx: 10.5%/262K [A]'
+  cells_compact=' [M] SWE-2 · @ main'
+  _fm_composer_row_is_omp_status "$hook" \
+    || fail "omp's bracketed model/hook-status row must be recognized as furniture"
+  _fm_composer_row_is_omp_status "$context" \
+    || fail "omp's Context meter row must be recognized as furniture"
+  _fm_composer_row_is_omp_status "$cells_pi" \
+    || fail "omp's pi-led cells row must be recognized as furniture"
+  _fm_composer_row_is_omp_status "$cells_bracket" \
+    || fail "omp's bracket-led cells row must be recognized as furniture"
+  _fm_composer_row_is_omp_status "$cells_compact" \
+    || fail "omp's compact-preset cells row must be recognized as furniture"
+  # The new rows' anchors must not swallow typed input: prose that opens like
+  # furniture but lacks the structural rest of the row stays composer text.
+  _fm_composer_row_is_omp_status ' Context matters here' \
+    && fail "prose opening 'Context' must not be mistaken for omp status furniture"
+  _fm_composer_row_is_omp_status ' [SWE-2 (High)] my typed note' \
+    && fail "a bracketed cell without the status separator must not be furniture"
+  _fm_composer_row_is_omp_status ' [M] SWE-2 something typed' \
+    && fail "a bracketed cell without a middle-dot cells row must not be furniture"
+  _fm_composer_row_is_omp_status ' pi · docs are done · @ 10' \
+    && fail "pi-led prose without a bracketed cell must not be furniture"
+  # The three-row screen itself: an idle composer above the furniture block
+  # reads empty, and a composer holding typed text above it stays pending.
+  screen=$'transcript line\n\n❯\n'"$hook"$'\n'"$context"$'\n'"$cells_pi"
+  assert_screen "idle omp above the three-row furniture block" empty "$CAPS_STYLED" "$screen"
+  screen=$'transcript line\n\n❯ fix the doorbell regex\n'"$hook"$'\n'"$context"$'\n'"$cells_pi"
+  assert_screen "typed text above the three-row furniture block" pending "$CAPS_STYLED" "$screen"
+  screen=$'transcript line\n\n❯\n'"$hook"$'\n'"$context"$'\n'"$cells_bracket"
+  assert_screen "idle omp above the bracket-led cells row" empty "$CAPS_STYLED" "$screen"
+  pass "matrix: omp's three-row status furniture bounds the bare composer's wrap region"
+}
+
 # codex_cell <grey> <glyph>: one codex 0.154 starfield cell exactly as the
 # harness draws it - a truecolor grey foreground, the composer's grey
 # background, the braille glyph, then a reset.
@@ -1723,6 +1768,7 @@ test_matrix_cursor_reverse_video_placeholder_remnant
 test_matrix_cursor_fully_dim_placeholder
 test_matrix_herdr_halfblock_rule_bounds_bare_wrap
 test_matrix_omp_status_row_bounds_bare_composer
+test_matrix_omp_status_furniture_rows_bound_bare_composer
 test_matrix_codex_idle_starfield_furniture
 test_matrix_pi_separated_needs_identity
 test_matrix_pi_dollar_status_footer_is_empty
