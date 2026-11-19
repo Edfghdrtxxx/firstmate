@@ -19,11 +19,16 @@ concurrency:
   group: no-mistakes-required-${{ github.event.pull_request.number }}-${{ (github.event.action == 'opened' || github.event.action == 'edited') && github.run_id || 'head-change' }}
   cancel-in-progress: true
 
+# The pipeline gate only has meaning on the upstream repository that runs the
+# no-mistakes pipeline. On a fork the attestation can never be produced by the
+# fork's own PR workers, so the check would fail every pull request there; a
+# skipped job reports a successful check instead.
 jobs:
   check:
     name: PR must be raised via no-mistakes
     runs-on: ubuntu-latest
     if: >-
+      !github.event.repository.fork &&
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
