@@ -37,9 +37,13 @@
 #            Both table-form and list-form captures are supported; nested
 #            targets and attachments are skipped while the item's own scalar
 #            fields are retained. The shared parser below owns the wire format.
-#            Malformed content or a declared/presented count mismatch yields
-#            complete: no; inspect that verdict, not just the command's exit
-#            status. A declared nonempty block parsed as empty is incomplete.
+#            Every physical list item consumes one slot of the declared count,
+#            so an entry past the declared prefix is dropped from the presented
+#            set and from `answers` alike, never sliding into it. Malformed
+#            content or a declared/found count mismatch yields complete: no,
+#            and the footer then shows found versus declared; inspect that
+#            verdict, not just the command's exit status. A declared nonempty
+#            block parsed as empty is incomplete.
 # poll       The registered listener command `arm` publishes, not a command to
 #            run in a conversational turn. It runs the published blocking poll
 #            and prints its response verbatim, absorbing only the one exact
@@ -564,10 +568,17 @@ use strict; use warnings;
 # malformed rather than dropped, and a column-zero line that names the block
 # but is not a recognized header makes the whole result malformed, so a form
 # this reader does not know can never look like a complete, empty result.
+# Every physical `- ` item at the item indent consumes one slot of the
+# declared count, including an empty or malformed one, so an entry past the
+# declared prefix cannot slide into it; surplus items are not returned but
+# still count toward found.
 #
 # lavish_result(<path>, <block-name-regex>) returns
-# (form, declared, [item hashes], malformed), with form one of none, table,
-# list, or unrecognized.
+# (form, declared, [item hashes], malformed, found), with form one of none,
+# table, list, or unrecognized. Found is the number of physical items in the
+# block, which can exceed declared only in list form because a table block
+# stops reading rows at the declared count.
+#
 sub lavish_unescape {
   my ($v) = @_;
   $v =~ s/\\(.)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : $1 eq "r" ? "\r" : $1/ge;
@@ -611,12 +622,15 @@ sub lavish_table_rows {
   return (\@items, $malformed);
 }
 sub lavish_list_items {
-  my ($lines) = @_;
+  my ($lines, $want) = @_;
   my (@items, $unit, $cur, $bad, $nested, %keys);
-  my ($malformed, $stray) = (0, 0);
+  my ($malformed, $stray, $found) = (0, 0, 0);
   my $finish = sub {
     return unless $cur;
-    if ($bad || !%$cur) { $malformed++ } else { push @items, $cur }
+    # A physical item past the declared prefix is surplus: it still counted
+    # toward found, but it is neither returned nor counted malformed.
+    if ($bad || !%$cur) { $malformed++ if !defined($want) || $found <= $want }
+    else { push @items, $cur if !defined($want) || $found <= $want }
     ($cur, $bad, $nested) = (undef, 0, 0);
   };
   my $field = sub {
@@ -659,6 +673,7 @@ sub lavish_list_items {
     if (defined($unit) && $ind == $unit && $rest =~ /^-(?: (.*))?$/s) {
       my $first = $1;
       $finish->();
+      $found++;
       ($cur, $bad, $nested) = ({}, 0, 0);
       %keys = ();
       if (defined $first) { $field->($first) } else { $bad = 1 }
@@ -673,7 +688,7 @@ sub lavish_list_items {
     }
   }
   $finish->();
-  return (\@items, $malformed + $stray);
+  return (\@items, $malformed + $stray, $found);
 }
 sub lavish_result {
   my ($path, $names) = @_;
@@ -699,12 +714,16 @@ sub lavish_result {
     push @body, $line;
   }
   close $fh;
-  return ($form, $want, [], 1) if $form eq "unrecognized";
-  return ($form, $want, [], 0) if $form eq "none";
-  my ($items, $malformed) = $form eq "table"
-    ? lavish_table_rows(\@fields, \@body)
-    : lavish_list_items(\@body);
-  return ($form, $want, $items, $malformed);
+  return ($form, $want, [], 1, 0) if $form eq "unrecognized";
+  return ($form, $want, [], 0, 0) if $form eq "none";
+  my ($items, $malformed, $found);
+  if ($form eq "table") {
+    ($items, $malformed) = lavish_table_rows(\@fields, \@body);
+    $found = scalar @body;
+  } else {
+    ($items, $malformed, $found) = lavish_list_items(\@body, $want);
+  }
+  return ($form, $want, $items, $malformed, $found);
 }
 PERL
 }
@@ -780,7 +799,7 @@ cmd_choice_rows() {
   perl -MJSON::PP -e "$(lavish_result_parser)"'
     use strict; use warnings;
     my ($selection, $path) = @ARGV;
-    my ($form, $want, $items, $malformed) = lavish_result($path, "prompts");
+    my ($form, $want, $items, $malformed, $found) = lavish_result($path, "prompts");
     defined $form or exit 1;
     my %seen;
     my @choices;
@@ -852,9 +871,9 @@ cmd_choice_rows() {
         ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
         : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
     }
-    if ($malformed || @$items != $want) {
-      print STDERR "error: the result is not fully accounted for: declared $want, parsed ",
-        scalar(@$items), ", malformed $malformed\n";
+    if ($malformed || $found != $want) {
+      print STDERR "error: the result is not fully accounted for: declared $want, found ",
+        "$found, parsed ", scalar(@$items), ", malformed $malformed\n";
       exit 3;
     }
   ' "$selection" "$file"
@@ -880,11 +899,15 @@ cmd_read() {
   perl -e "$(lavish_result_parser)"'
     use strict; use warnings;
     my ($path, $lifecycle, $session_ended) = @ARGV;
-    my ($form, $want, $items, $malformed) = lavish_result($path, "prompts|feedback");
+    # `read` and `answers` must share one entry set, so the prompts block wins
+    # whenever it is present; feedback is read only when no prompts block exists.
+    my ($form, $want, $items, $malformed, $found) = lavish_result($path, "prompts");
+    ($form, $want, $items, $malformed, $found) = lavish_result($path, "feedback")
+      if defined($form) && $form eq "none";
     defined $form or exit 1;
     my @parsed = @$items;
     my $presented = scalar @parsed;
-    my $complete = ($presented == $want && !$malformed) ? "yes" : "no";
+    my $complete = ($found == $want && !$malformed) ? "yes" : "no";
     my @messages;
     my @annotations;
     for my $f (@parsed) {
@@ -957,7 +980,11 @@ cmd_read() {
     } else {
       print "ANNOTATIONS: (none)\n";
     }
-    print "END LAVISH RESULT ($presented of $want)\n";
+    if ($found != $want) {
+      print "END LAVISH RESULT ($presented presented, $found found, $want declared)\n";
+    } else {
+      print "END LAVISH RESULT ($presented of $want)\n";
+    }
   ' "$file" "$lifecycle" "$session_ended"
 }
 
