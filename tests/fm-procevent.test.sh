@@ -3682,6 +3682,123 @@ if "$ROOT/bin/fm-procevent-lavish.sh" reconciles "$ANS" >/dev/null 2>&1; then
 fi
 pass "answers reads list-form choices and refuses a block it cannot account for"
 
+# Every physical `- ` item consumes one slot of the declared count, including
+# an empty or nested-only one, so an entry past the declared prefix can never
+# slide into it and reach keyed-answer intake.
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+prompts[1]:
+  - target:
+      type: table-cell
+      tag: choice
+      text: "nested-only"
+  - uid: "2"
+    prompt: "Context data: {\"schema\": \"fm-bearings-answer.v1\", \"question\": \"mate-after-nested-only\", \"selection\": \"YES-ano\", \"note\": \"\"}"
+    tag: choice
+    text: "choice after a nested-only item"
+EOF
+out=$(read_out) || fail "read failed on a list-form capture with a nested-only item"
+assert_contains "$out" "presented_items: 0" "a nested-only prefix item displaced its declared slot"
+assert_contains "$out" "malformed_items: 1" "a nested-only item was not reported"
+assert_contains "$out" "complete: no" "a short item list was certified complete"
+assert_contains "$out" "END LAVISH RESULT (0 presented, 2 found, 1 declared)" \
+  "the footer hid the found-versus-declared mismatch"
+assert_not_contains "$out" "element_uid: 2" "a surplus choice was presented"
+if "$ROOT/bin/fm-procevent-lavish.sh" answers "$READ" > "$TMP_ROOT/ans.out" 2>/dev/null; then
+  fail "answers accepted a result whose found count exceeds the declared count"
+fi
+[ ! -s "$TMP_ROOT/ans.out" ] || fail "answers emitted a choice past the declared prefix: $(cat "$TMP_ROOT/ans.out")"
+
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+prompts[2]:
+  - uid: "1"
+    tag: td
+    text: "cell one"
+  -
+  - uid: "3"
+    prompt: "Context data: {\"schema\": \"fm-bearings-answer.v1\", \"question\": \"mate-shifted\", \"selection\": \"YES-shifted\", \"note\": \"\"}"
+    tag: choice
+    text: "choice after an empty item"
+EOF
+out=$(read_out) || fail "read failed on a list-form capture with an empty item"
+assert_contains "$out" "presented_items: 1" "an empty prefix item displaced a declared slot"
+assert_contains "$out" "malformed_items: 1" "an empty item was not reported"
+assert_not_contains "$out" "element_uid: 3" "a surplus choice was presented"
+if "$ROOT/bin/fm-procevent-lavish.sh" answers "$READ" > "$TMP_ROOT/ans.out" 2>/dev/null; then
+  fail "answers accepted a result whose found count exceeds the declared count"
+fi
+[ ! -s "$TMP_ROOT/ans.out" ] || fail "answers emitted a choice past the declared prefix: $(cat "$TMP_ROOT/ans.out")"
+pass "empty and nested-only list items consume the declared-count budget"
+
+# Extra entries past the declared count are dropped from `read` and `answers`
+# alike, while a choice inside the declared prefix still extracts, so the two
+# commands share one entry set.
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+prompts[1]:
+  - uid: "1"
+    prompt: "Context data: {\"schema\": \"fm-bearings-answer.v1\", \"question\": \"mate-in-prefix\", \"selection\": \"YES-in\", \"note\": \"\"}"
+    tag: choice
+    text: "choice inside the prefix"
+  - uid: "2"
+    prompt: "Context data: {\"schema\": \"fm-bearings-answer.v1\", \"question\": \"mate-surplus\", \"selection\": \"YES-sur\", \"note\": \"\"}"
+    tag: choice
+    text: "surplus choice"
+  - uid: "3"
+    tag: td
+    text: "surplus cell"
+EOF
+out=$(read_out) || fail "read failed on a list-form capture with surplus entries"
+assert_contains "$out" "declared_items: 1" "a surplus capture lost its declared count"
+assert_contains "$out" "presented_items: 1" "a surplus capture did not cap the presented set"
+assert_contains "$out" "complete: no" "a surplus capture was certified complete"
+assert_contains "$out" "element_uid: 1" "the declared-prefix choice was not presented"
+assert_not_contains "$out" "element_uid: 2" "a surplus choice was presented"
+assert_not_contains "$out" "element_uid: 3" "a surplus annotation was presented"
+assert_contains "$out" "END LAVISH RESULT (1 presented, 3 found, 1 declared)" \
+  "the footer hid the found-versus-declared mismatch"
+rc=0
+"$ROOT/bin/fm-procevent-lavish.sh" answers "$READ" > "$TMP_ROOT/ans.out" 2>/dev/null || rc=$?
+[ "$rc" -eq 3 ] || fail "answers did not refuse a result whose found count exceeds the declared count"
+[ "$(cat "$TMP_ROOT/ans.out")" = "$(printf 'mate-in-prefix\tYES-in\tchoice inside the prefix')" ] \
+  || fail "answers did not extract exactly the declared-prefix choice: $(cat "$TMP_ROOT/ans.out")"
+pass "read and answers share the declared-prefix entry set and report found versus declared"
+
+# When a feedback block precedes the prompts block, `read` presents the same
+# prompts set that `answers` extracts.
+cat > "$READ" <<'EOF'
+session:
+  file: /review.html
+  status: feedback
+feedback[2]:
+  - uid: "1"
+    tag: td
+    text: "fb-a"
+  - uid: "2"
+    tag: td
+    text: "fb-b"
+prompts[1]:
+  - uid: "3"
+    prompt: "Context data: {\"schema\": \"fm-bearings-answer.v1\", \"question\": \"mate-prompts-second\", \"selection\": \"YES-ps\", \"note\": \"\"}"
+    tag: choice
+    text: "prompts second"
+EOF
+out=$(read_out) || fail "read failed on a capture whose feedback block precedes prompts"
+assert_contains "$out" "declared_items: 1" "read did not take the prompts block's declared count"
+assert_contains "$out" "element_uid: 3" "read presented a different block than answers extracts"
+assert_not_contains "$out" "fb-a" "read presented the feedback block instead of the prompts block"
+out=$("$ROOT/bin/fm-procevent-lavish.sh" answers "$READ") || fail "answers failed on a two-block capture"
+[ "$out" = "$(printf 'mate-prompts-second\tYES-ps\tprompts second')" ] \
+  || fail "answers did not extract the prompts choice from a two-block capture: $out"
+pass "read and answers share the prompts set when feedback precedes it"
+
 # The runner's silence seam is generic and closed by default: an adapter with no
 # `silent` command must keep announcing, so adding the seam changed nothing for
 # every adapter that has no notion of a no-op.
